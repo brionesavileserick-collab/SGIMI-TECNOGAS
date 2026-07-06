@@ -99,6 +99,9 @@ SGIMI TECNOGAS/
 
 ### Compilar Ejecutable
 
+PyInstaller genera binarios para el sistema operativo donde se ejecuta la compilacion:
+compile el `.exe` en Windows, el binario Linux en Linux y la app/binario macOS en macOS.
+
 ```bash
 # Compilar como directorio
 python build_exe.py
@@ -106,9 +109,14 @@ python build_exe.py
 # Compilar como archivo unico
 python build_exe.py --onefile
 
+# Crear paquete distribuible
+python build_exe.py --clean --dist
+
 # Limpiar y compilar
 python build_exe.py --clean --onefile
 ```
+
+La base de datos y los logs se guardan en la carpeta de datos del usuario del sistema operativo, por lo que la aplicacion puede ejecutarse como sistema de escritorio instalado sin escribir dentro de la carpeta del programa.
 
 ### Soporte
 Para soporte tecnico, contacte: soporte@tecnogas.com

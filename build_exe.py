@@ -8,7 +8,11 @@ Options:
     --onefile    Build as single executable file
     --onedir     Build as directory (default)
     --clean      Clean build artifacts before building
-    --all        Build for all platforms (requires appropriate tools)
+    --dist       Create a distributable package after building
+
+Note:
+    PyInstaller builds are platform-specific. Build the Windows .exe on
+    Windows, the Linux binary on Linux, and the macOS app/binary on macOS.
 """
 
 import os
@@ -17,6 +21,16 @@ import shutil
 import subprocess
 import platform
 from pathlib import Path
+
+
+APP_NAME = 'SGIMI_TECNOGAS'
+
+
+def get_executable_name():
+    """Return the expected executable name for the current platform."""
+    if platform.system() == 'Windows':
+        return f'{APP_NAME}.exe'
+    return APP_NAME
 
 
 def clean_build():
@@ -71,7 +85,7 @@ def build_executable(onefile=False):
     cmd.append('--windowed')
 
     # Add name
-    cmd.extend(['--name', 'SGIMI_TECNOGAS'])
+    cmd.extend(['--name', APP_NAME])
 
     # Add data files (if needed)
     # cmd.extend(['--add-data', 'data;data'])
@@ -84,6 +98,9 @@ def build_executable(onefile=False):
         'PyQt6.QtWidgets',
         'sqlalchemy',
         'dateutil',
+        'modules.alerts.routes',
+        'modules.history.routes',
+        'modules.reports.routes',
     ]
 
     for imp in hidden_imports:
@@ -110,7 +127,7 @@ def build_executable(onefile=False):
         return False
 
     print("Build successful!")
-    print(f"Output location: dist/SGIMI_TECNOGAS")
+    print(f"Output location: dist/{APP_NAME}")
 
     return True
 
@@ -119,8 +136,8 @@ def create_distribution_package():
     """
     Create distribution package with executable, README, and LICENSE.
     """
-    dist_dir = Path('dist/SGIMI_TECNOGAS_Distribution')
-    exe_dir = Path('dist/SGIMI_TECNOGAS')
+    dist_dir = Path(f'dist/{APP_NAME}_Distribution')
+    exe_dir = Path(f'dist/{APP_NAME}')
 
     if not exe_dir.exists():
         print("No executable found. Build first.")
@@ -142,10 +159,14 @@ def create_distribution_package():
 
 ### Instalacion
 1. Descomprima el archivo descargado
-2. Ejecute SGIMI_TECNOGAS.exe (Windows) o SGIMI_TECNOGAS (Linux/Mac)
+2. Ejecute SGIMI_TECNOGAS.exe (Windows) o SGIMI_TECNOGAS (Linux/macOS)
 
 ### Primer Uso
 Al abrir la aplicacion por primera vez, cree el usuario inicial con datos reales.
+
+### Datos de la Aplicacion
+La base de datos y los logs se guardan en la carpeta de datos del usuario del sistema operativo.
+Esto permite ejecutar la aplicacion desde ubicaciones protegidas sin permisos de escritura.
 
 ### Soporte
 Para soporte tecnico, contacte a soporte@tecnogas.com
@@ -164,8 +185,8 @@ Version: 1.0.0
 # Copie este archivo a la misma ubicacion del ejecutable si necesita personalizar
 
 [DATABASE]
-# URL de la base de datos (SQLite por defecto)
-URL = sqlite:///sgimi_tecnogas.db
+# URL de la base de datos. Si se omite, la aplicacion usa la carpeta de datos del usuario.
+URL =
 
 [LOGGING]
 # Nivel de registro: DEBUG, INFO, WARNING, ERROR

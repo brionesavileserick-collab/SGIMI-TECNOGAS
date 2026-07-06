@@ -45,7 +45,8 @@ class InventoryService:
 
     def list_inventory(self, page: int = 1, page_size: int = 20,
                        branch_id: int = None, product_id: int = None,
-                       low_stock_only: bool = False, discrepancy_only: bool = False) -> Dict[str, Any]:
+                       low_stock_only: bool = False, discrepancy_only: bool = False,
+                       search: str = None) -> Dict[str, Any]:
         """List inventory with pagination and filtering."""
         skip = (page - 1) * page_size
         inventory_items = self.repository.get_all(
@@ -54,14 +55,16 @@ class InventoryService:
             branch_id=branch_id,
             product_id=product_id,
             low_stock_only=low_stock_only,
-            discrepancy_only=discrepancy_only
+            discrepancy_only=discrepancy_only,
+            search=search
         )
 
         total = self.repository.count(
             branch_id=branch_id,
             product_id=product_id,
             low_stock_only=low_stock_only,
-            discrepancy_only=discrepancy_only
+            discrepancy_only=discrepancy_only,
+            search=search
         )
 
         return {
@@ -116,6 +119,22 @@ class InventoryService:
 
     def adjust_digital_stock(self, product_id: int, branch_id: int, quantity: int, is_absolute: bool = False) -> Optional[Dict[str, Any]]:
         """Adjust digital stock."""
+        inventory = self.repository.get_by_product_branch(product_id, branch_id)
+        if not inventory:
+            if not is_absolute and quantity < 0:
+                return None
+
+            inventory = self.repository.create({
+                "product_id": product_id,
+                "branch_id": branch_id,
+                "physical_stock": 0,
+                "digital_stock": quantity,
+                "min_stock": 0
+            })
+            self._emit_inventory_updated(inventory)
+            logger.info(f"Inventory created from stock event: Product {product_id}, Branch {branch_id}, Digital {quantity}")
+            return inventory.to_dict()
+
         # Update stock
         if is_absolute:
             inventory = self.repository.set_stock(product_id, branch_id, digital_stock=quantity)

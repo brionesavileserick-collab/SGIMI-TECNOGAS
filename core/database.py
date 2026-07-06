@@ -3,6 +3,7 @@ Database configuration and session management.
 """
 
 from sqlalchemy import create_engine
+from sqlalchemy import event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
@@ -18,6 +19,15 @@ engine = create_engine(
     echo=settings.DEBUG,
     pool_pre_ping=True
 )
+
+
+@event.listens_for(engine, "connect")
+def enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+    """Enable foreign key enforcement for SQLite connections."""
+    if settings.DATABASE_URL.startswith("sqlite"):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -42,6 +52,12 @@ def init_db() -> None:
     """Initialize database, creating all tables."""
     from models import product, branch, inventory, movement, user
     Base.metadata.create_all(bind=engine)
+    if settings.DATABASE_URL.startswith("sqlite"):
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_product_branch "
+                "ON inventory(product_id, branch_id)"
+            )
     logger.info("Database initialized successfully")
 
 

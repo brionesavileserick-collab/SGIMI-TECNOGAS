@@ -5,6 +5,7 @@ Application configuration file.
 import logging
 import os
 from logging.config import dictConfig
+from core.settings import settings
 
 # Logging configuration
 LOGGING_CONFIG = {
@@ -31,7 +32,7 @@ LOGGING_CONFIG = {
             "class": "logging.handlers.RotatingFileHandler",
             "level": "DEBUG",
             "formatter": "detailed",
-            "filename": "logs/sgimi.log",
+            "filename": str(settings.LOG_FILE),
             "maxBytes": 10485760,  # 10MB
             "backupCount": 5
         }
@@ -49,7 +50,7 @@ LOGGING_CONFIG = {
 def setup_logging():
     """Configure application logging."""
     # Create logs directory if it doesn't exist
-    os.makedirs("logs", exist_ok=True)
+    os.makedirs(settings.LOG_DIR, exist_ok=True)
     dictConfig(LOGGING_CONFIG)
 
 

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from modules.movements.repository import MovementRepository
 from core.event_bus import event_bus
 from core.settings import settings
+from utils.validators import validate_movement_type, validate_quantity
 from datetime import datetime
 import logging
 
@@ -22,17 +23,8 @@ class MovementService:
 
     def create_movement(self, movement_data: dict) -> Dict[str, Any]:
         """Create a new movement and emit event."""
-        # Validate movement type
-        valid_types = ["entrada", "salida", "ajuste", "transferencia"]
-        if movement_data.get("movement_type") not in valid_types:
-            raise ValueError(f"Tipo de movimiento invalido: {movement_data.get('movement_type')}")
-
-        # Validate transfer destination
-        if movement_data.get("movement_type") == "transferencia":
-            if not movement_data.get("destination_branch_id"):
-                raise ValueError("La transferencia requiere sucursal destino")
-            if movement_data.get("branch_id") == movement_data.get("destination_branch_id"):
-                raise ValueError("La sucursal origen y destino no pueden ser la misma")
+        movement_data = self._sanitize_movement_data(movement_data)
+        self._validate_movement_data(movement_data)
 
         # Create movement
         movement = self.repository.create(movement_data)
@@ -93,7 +85,9 @@ class MovementService:
             product_id=product_id,
             user_id=user_id,
             movement_type=movement_type,
-            state=state
+            state=state,
+            date_from=date_from,
+            date_to=date_to
         )
 
         return {
@@ -112,6 +106,9 @@ class MovementService:
 
         if movement.state != "pendiente":
             raise ValueError("Solo movimientos pendientes pueden ser validados")
+
+        if not self._active_user_exists(validator_id):
+            raise ValueError("El usuario validador no existe o esta inactivo")
 
         validation_error = self._get_validation_error(movement)
         if validation_error:
@@ -185,6 +182,9 @@ class MovementService:
         if movement.state != "pendiente":
             raise ValueError("Solo movimientos pendientes pueden ser rechazados")
 
+        if not self._active_user_exists(validator_id):
+            raise ValueError("El usuario validador no existe o esta inactivo")
+
         # Reject movement
         movement = self.repository.reject(movement_id, validator_id, reason)
 
@@ -227,6 +227,78 @@ class MovementService:
         """Get movement statistics."""
         return self.repository.get_stats_by_type(branch_id, date_from)
 
+    def _sanitize_movement_data(self, movement_data: dict) -> dict:
+        """Normalize movement input before persistence."""
+        data = movement_data.copy()
+        if data.get("movement_type"):
+            data["movement_type"] = data["movement_type"].strip().lower()
+        if data.get("reason") is not None:
+            data["reason"] = data["reason"].strip()
+        if data.get("notes") is not None:
+            data["notes"] = data["notes"].strip()
+        return data
+
+    def _validate_movement_data(self, movement_data: dict) -> None:
+        """Validate movement fields and references."""
+        is_valid, error = validate_movement_type(movement_data.get("movement_type"))
+        if not is_valid:
+            raise ValueError(error)
+
+        is_valid, error = validate_quantity(movement_data.get("quantity"))
+        if not is_valid:
+            raise ValueError(error)
+        if movement_data.get("quantity") == 0:
+            raise ValueError("La cantidad debe ser mayor a cero")
+
+        if not movement_data.get("product_id"):
+            raise ValueError("El producto es requerido")
+        if not movement_data.get("branch_id"):
+            raise ValueError("La sucursal origen es requerida")
+        if not movement_data.get("user_id"):
+            raise ValueError("El usuario responsable es requerido")
+
+        if not self._active_product_exists(movement_data["product_id"]):
+            raise ValueError("El producto no existe o esta inactivo")
+        if not self._active_branch_exists(movement_data["branch_id"]):
+            raise ValueError("La sucursal origen no existe o esta inactiva")
+        if not self._active_user_exists(movement_data["user_id"]):
+            raise ValueError("El usuario responsable no existe o esta inactivo")
+
+        if movement_data.get("movement_type") == "transferencia":
+            destination_branch_id = movement_data.get("destination_branch_id")
+            if not destination_branch_id:
+                raise ValueError("La transferencia requiere sucursal destino")
+            if movement_data.get("branch_id") == destination_branch_id:
+                raise ValueError("La sucursal origen y destino no pueden ser la misma")
+            if not self._active_branch_exists(destination_branch_id):
+                raise ValueError("La sucursal destino no existe o esta inactiva")
+        elif movement_data.get("destination_branch_id"):
+            raise ValueError("Solo las transferencias pueden tener sucursal destino")
+
+    def _active_product_exists(self, product_id: int) -> bool:
+        from models.product import Product
+
+        return self.db.query(Product.id).filter(
+            Product.id == product_id,
+            Product.is_active == True
+        ).first() is not None
+
+    def _active_branch_exists(self, branch_id: int) -> bool:
+        from models.branch import Branch
+
+        return self.db.query(Branch.id).filter(
+            Branch.id == branch_id,
+            Branch.is_active == True
+        ).first() is not None
+
+    def _active_user_exists(self, user_id: int) -> bool:
+        from models.user import User
+
+        return self.db.query(User.id).filter(
+            User.id == user_id,
+            User.is_active == True
+        ).first() is not None
+
     def _enrich_movement(self, movement) -> Dict[str, Any]:
         """Enrich movement with related entity details."""
         details = self.repository.get_movement_with_details(movement.id)
@@ -237,4 +309,5 @@ class MovementService:
         result["product"] = details["product"]
         result["branch"] = details["branch"]
         result["user"] = details["user"]
+        result["destination_branch"] = details.get("destination_branch")
         return result

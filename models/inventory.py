@@ -2,7 +2,7 @@
 Inventory model for tracking stock levels per branch.
 """
 
-from sqlalchemy import Column, Integer, Float, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, Float, DateTime, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from core.database import Base
@@ -12,6 +12,9 @@ class Inventory(Base):
     """Inventory model for stock tracking per branch."""
 
     __tablename__ = "inventory"
+    __table_args__ = (
+        UniqueConstraint("product_id", "branch_id", name="uq_inventory_product_branch"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -44,8 +47,8 @@ class Inventory(Base):
 
     @property
     def is_low_stock(self) -> bool:
-        """Check if stock is below minimum level."""
-        return min(self.physical_stock, self.digital_stock) <= self.min_stock
+        """Check if digital stock is below minimum level."""
+        return self.digital_stock <= self.min_stock
 
     def to_dict(self):
         """Convert inventory to dictionary."""

@@ -42,6 +42,9 @@ from modules.products.routes import ProductListView
 from modules.branches.routes import BranchListView
 from modules.inventory.routes import InventoryListView
 from modules.movements.routes import MovementListView
+from modules.alerts.routes import AlertListView
+from modules.history.routes import HistoryListView
+from modules.reports.routes import ReportsView
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +327,9 @@ class MainWindow(QMainWindow):
             ("Sucursales", "🏢"),
             ("Inventario", "📋"),
             ("Movimientos", "🔄"),
+            ("Alertas", "!"),
+            ("Historial", "H"),
+            ("Reportes", "R"),
         ]
 
         for text, icon in nav_items:
@@ -424,6 +430,18 @@ class MainWindow(QMainWindow):
         self.movements_view = MovementListView(self.db, self.user.id)
         self.content_stack.addWidget(self.movements_view)
 
+        # Alerts
+        self.alerts_view = AlertListView(self.db)
+        self.content_stack.addWidget(self.alerts_view)
+
+        # History
+        self.history_view = HistoryListView(self.db)
+        self.content_stack.addWidget(self.history_view)
+
+        # Reports
+        self.reports_view = ReportsView(self.db)
+        self.content_stack.addWidget(self.reports_view)
+
     def setup_handlers(self):
         """Setup all event handlers."""
         # Initialize handlers from each module
@@ -443,6 +461,9 @@ class MainWindow(QMainWindow):
             "Sucursales": 2,
             "Inventario": 3,
             "Movimientos": 4,
+            "Alertas": 5,
+            "Historial": 6,
+            "Reportes": 7,
         }
 
         if view_name in view_index:

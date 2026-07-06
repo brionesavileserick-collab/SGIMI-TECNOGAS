@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from modules.products.repository import ProductRepository
 from core.event_bus import event_bus
 from core.settings import settings
+from utils.validators import validate_name, validate_sku
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,9 @@ class ProductService:
 
     def create_product(self, product_data: dict) -> Dict[str, Any]:
         """Create a new product and emit event."""
+        product_data = self._sanitize_product_data(product_data)
+        self._validate_product_data(product_data, require_required=True)
+
         # Validate SKU uniqueness
         if self.repository.sku_exists(product_data.get("sku")):
             raise ValueError(f"SKU '{product_data.get('sku')}' already exists")
@@ -64,6 +68,9 @@ class ProductService:
 
     def update_product(self, product_id: int, update_data: dict) -> Optional[Dict[str, Any]]:
         """Update product and emit event."""
+        update_data = self._sanitize_product_data(update_data)
+        self._validate_product_data(update_data, require_required=False)
+
         # Check for SKU uniqueness if SKU is being updated
         if "sku" in update_data:
             if self.repository.sku_exists(update_data["sku"], exclude_id=product_id):
@@ -113,3 +120,37 @@ class ProductService:
         """Get all active products."""
         products = self.repository.get_all(limit=1000)
         return [p.to_dict() for p in products]
+
+    def _sanitize_product_data(self, product_data: dict) -> dict:
+        """Normalize product input before persistence."""
+        data = product_data.copy()
+        if "sku" in data and data["sku"]:
+            data["sku"] = data["sku"].strip().upper()
+        if "name" in data and data["name"]:
+            data["name"] = data["name"].strip()
+        if "description" in data and data["description"] is not None:
+            data["description"] = data["description"].strip()
+        if "unit_of_measure" in data and data["unit_of_measure"]:
+            data["unit_of_measure"] = data["unit_of_measure"].strip()
+        return data
+
+    def _validate_product_data(self, product_data: dict, require_required: bool) -> None:
+        """Validate product fields used by create and update operations."""
+        if require_required or "sku" in product_data:
+            is_valid, error = validate_sku(product_data.get("sku"))
+            if not is_valid:
+                raise ValueError(error)
+
+        if require_required or "name" in product_data:
+            is_valid, error = validate_name(product_data.get("name"), "Nombre")
+            if not is_valid:
+                raise ValueError(error)
+
+        if (require_required or "unit_of_measure" in product_data) and not product_data.get("unit_of_measure"):
+            raise ValueError("La unidad de medida es requerida")
+
+        if product_data.get("unit_price") is not None:
+            if not isinstance(product_data.get("unit_price"), (int, float)):
+                raise ValueError("El precio unitario debe ser numerico")
+            if product_data.get("unit_price") < 0:
+                raise ValueError("El precio unitario no puede ser negativo")

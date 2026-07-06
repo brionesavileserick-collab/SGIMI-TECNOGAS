@@ -3,7 +3,34 @@ Application settings and configuration constants.
 """
 
 import os
+import sys
+from pathlib import Path
 from typing import Optional
+
+
+def get_user_data_dir() -> Path:
+    """Return a writable per-user application data directory."""
+    app_folder = "SGIMI TECNOGAS"
+
+    if sys.platform.startswith("win"):
+        base_dir = os.getenv("LOCALAPPDATA") or os.getenv("APPDATA") or str(Path.home())
+        return Path(base_dir) / app_folder
+
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / app_folder
+
+    base_dir = os.getenv("XDG_DATA_HOME")
+    if base_dir:
+        return Path(base_dir) / "sgimi-tecnogas"
+    return Path.home() / ".local" / "share" / "sgimi-tecnogas"
+
+
+def get_default_database_url() -> str:
+    """Return the default SQLite URL in a writable user data directory."""
+    data_dir = get_user_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    db_path = data_dir / "sgimi_tecnogas.db"
+    return f"sqlite:///{db_path.as_posix()}"
 
 
 class Settings:
@@ -13,9 +40,12 @@ class Settings:
     APP_NAME: str = "SGIMI TECNOGAS"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
+    USER_DATA_DIR: Path = get_user_data_dir()
+    LOG_DIR: Path = USER_DATA_DIR / "logs"
+    LOG_FILE: Path = LOG_DIR / "sgimi.log"
 
     # Database
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///sgimi_tecnogas.db")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", get_default_database_url())
 
     # Security
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")

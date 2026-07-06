@@ -66,7 +66,8 @@ class MovementRepository:
 
     def count(self, branch_id: int = None, product_id: int = None,
               user_id: int = None, movement_type: str = None,
-              state: str = None) -> int:
+              state: str = None, date_from: datetime = None,
+              date_to: datetime = None) -> int:
         """Count movements with filtering."""
         query = self.db.query(Movement)
 
@@ -89,6 +90,12 @@ class MovementRepository:
 
         if state:
             query = query.filter(Movement.state == state)
+
+        if date_from:
+            query = query.filter(Movement.created_at >= date_from)
+
+        if date_to:
+            query = query.filter(Movement.created_at <= date_to)
 
         return query.count()
 
@@ -129,6 +136,7 @@ class MovementRepository:
         movement.state = MovementState.RECHAZADO.value
         movement.validated_at = datetime.utcnow()
         movement.validated_by = validator_id
+        movement.reason = reason
         if reason:
             movement.notes = f"{movement.notes or ''}\nRechazado: {reason}".strip()
 
@@ -153,7 +161,12 @@ class MovementRepository:
         )
 
         if branch_id:
-            query = query.filter(Movement.branch_id == branch_id)
+            query = query.filter(
+                or_(
+                    Movement.branch_id == branch_id,
+                    Movement.destination_branch_id == branch_id
+                )
+            )
 
         return query.count()
 

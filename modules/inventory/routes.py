@@ -40,16 +40,24 @@ class InventoryCountDialog(QDialog):
         # Product selection
         self.product_combo = QComboBox()
         products = self.product_service.get_all_active_products()
-        for product in products:
+        selected_product_index = 0
+        for index, product in enumerate(products):
             self.product_combo.addItem(f"{product['sku']} - {product['name']}", product['id'])
+            if product["id"] == self.inventory_data.get("product_id"):
+                selected_product_index = index
         layout.addRow("Producto:", self.product_combo)
+        self.product_combo.setCurrentIndex(selected_product_index)
 
         # Branch selection
         self.branch_combo = QComboBox()
         branches = self.branch_service.get_all_active_branches()
-        for branch in branches:
+        selected_branch_index = 0
+        for index, branch in enumerate(branches):
             self.branch_combo.addItem(branch['name'], branch['id'])
+            if branch["id"] == self.inventory_data.get("branch_id"):
+                selected_branch_index = index
         layout.addRow("Sucursal:", self.branch_combo)
+        self.branch_combo.setCurrentIndex(selected_branch_index)
 
         # Physical stock
         self.physical_stock = QSpinBox()
@@ -186,7 +194,8 @@ class InventoryListView(QWidget):
             page_size=100,
             branch_id=self.current_branch_id,
             low_stock_only=self.show_low_stock_only,
-            discrepancy_only=self.show_discrepancies_only
+            discrepancy_only=self.show_discrepancies_only,
+            search=search
         )
 
         items = result["inventory"]
@@ -296,4 +305,21 @@ class InventoryListView(QWidget):
 
     def on_adjust_inventory(self, inventory_id: int):
         """Handle inventory adjustment."""
-        QMessageBox.information(self, "Info", "Use el modulo de movimientos para ajustes de inventario")
+        inventory = self.service.get_inventory(inventory_id)
+        if not inventory:
+            QMessageBox.warning(self, "Error", "No se encontro el registro de inventario")
+            return
+
+        dialog = InventoryCountDialog(self.db, self, inventory)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            try:
+                data = dialog.get_data()
+                self.service.adjust_physical_stock(
+                    data["product_id"],
+                    data["branch_id"],
+                    data["physical_stock"]
+                )
+                QMessageBox.information(self, "Exito", "Conteo actualizado exitosamente")
+                self.load_inventory(self.search_input.text() or None)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Error al actualizar conteo: {str(e)}")

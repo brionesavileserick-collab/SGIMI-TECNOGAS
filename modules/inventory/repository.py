@@ -40,7 +40,8 @@ class InventoryRepository:
 
     def get_all(self, skip: int = 0, limit: int = 100,
                 branch_id: int = None, product_id: int = None,
-                low_stock_only: bool = False, discrepancy_only: bool = False) -> List[Inventory]:
+                low_stock_only: bool = False, discrepancy_only: bool = False,
+                search: str = None) -> List[Inventory]:
         """Get all inventory records with filtering."""
         query = self.db.query(Inventory).join(Product).join(Branch)
 
@@ -54,6 +55,15 @@ class InventoryRepository:
         if product_id:
             query = query.filter(Inventory.product_id == product_id)
 
+        if search:
+            query = query.filter(
+                or_(
+                    Product.name.ilike(f"%{search}%"),
+                    Product.sku.ilike(f"%{search}%"),
+                    Branch.name.ilike(f"%{search}%")
+                )
+            )
+
         if low_stock_only:
             query = query.filter(Inventory.digital_stock <= Inventory.min_stock)
 
@@ -63,7 +73,8 @@ class InventoryRepository:
         return query.offset(skip).limit(limit).all()
 
     def count(self, branch_id: int = None, product_id: int = None,
-              low_stock_only: bool = False, discrepancy_only: bool = False) -> int:
+              low_stock_only: bool = False, discrepancy_only: bool = False,
+              search: str = None) -> int:
         """Count inventory records with filtering."""
         query = self.db.query(Inventory).join(Product).join(Branch)
 
@@ -76,6 +87,15 @@ class InventoryRepository:
 
         if product_id:
             query = query.filter(Inventory.product_id == product_id)
+
+        if search:
+            query = query.filter(
+                or_(
+                    Product.name.ilike(f"%{search}%"),
+                    Product.sku.ilike(f"%{search}%"),
+                    Branch.name.ilike(f"%{search}%")
+                )
+            )
 
         if low_stock_only:
             query = query.filter(Inventory.digital_stock <= Inventory.min_stock)
@@ -146,7 +166,10 @@ class InventoryRepository:
 
     def get_total_physical_stock(self, branch_id: int = None) -> int:
         """Get total physical stock."""
-        query = self.db.query(func.sum(Inventory.physical_stock)).filter(Inventory.is_active == True)
+        query = self.db.query(func.sum(Inventory.physical_stock)).join(Product).join(Branch)
+        query = query.filter(Inventory.is_active == True)
+        query = query.filter(Product.is_active == True)
+        query = query.filter(Branch.is_active == True)
         if branch_id:
             query = query.filter(Inventory.branch_id == branch_id)
         result = query.scalar()
@@ -154,7 +177,10 @@ class InventoryRepository:
 
     def get_total_digital_stock(self, branch_id: int = None) -> int:
         """Get total digital stock."""
-        query = self.db.query(func.sum(Inventory.digital_stock)).filter(Inventory.is_active == True)
+        query = self.db.query(func.sum(Inventory.digital_stock)).join(Product).join(Branch)
+        query = query.filter(Inventory.is_active == True)
+        query = query.filter(Product.is_active == True)
+        query = query.filter(Branch.is_active == True)
         if branch_id:
             query = query.filter(Inventory.branch_id == branch_id)
         result = query.scalar()
@@ -164,6 +190,8 @@ class InventoryRepository:
         """Count items with discrepancies."""
         query = self.db.query(Inventory).join(Product).join(Branch)
         query = query.filter(Inventory.is_active == True)
+        query = query.filter(Product.is_active == True)
+        query = query.filter(Branch.is_active == True)
         query = query.filter(Inventory.physical_stock != Inventory.digital_stock)
 
         if branch_id:
@@ -175,6 +203,8 @@ class InventoryRepository:
         """Count items with low stock."""
         query = self.db.query(Inventory).join(Product).join(Branch)
         query = query.filter(Inventory.is_active == True)
+        query = query.filter(Product.is_active == True)
+        query = query.filter(Branch.is_active == True)
         query = query.filter(Inventory.digital_stock <= Inventory.min_stock)
 
         if branch_id:

@@ -4,7 +4,7 @@ Branch repository for database operations.
 
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from models.branch import Branch
 
 
@@ -100,7 +100,7 @@ class BranchRepository:
 
     def name_exists(self, name: str, exclude_id: int = None) -> bool:
         """Check if name already exists."""
-        query = self.db.query(Branch).filter(Branch.name == name)
+        query = self.db.query(Branch).filter(func.lower(Branch.name) == name.lower())
         if exclude_id:
             query = query.filter(Branch.id != exclude_id)
         return query.first() is not None

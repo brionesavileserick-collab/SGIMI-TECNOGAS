@@ -5,6 +5,7 @@ Branch service layer - Business logic.
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from modules.branches.repository import BranchRepository
+from utils.validators import validate_name
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,9 @@ class BranchService:
 
     def create_branch(self, branch_data: dict) -> Dict[str, Any]:
         """Create a new branch."""
+        branch_data = self._sanitize_branch_data(branch_data)
+        self._validate_branch_data(branch_data, require_required=True)
+
         # Validate name uniqueness
         if self.repository.name_exists(branch_data.get("name")):
             raise ValueError(f"Sucursal '{branch_data.get('name')}' ya existe")
@@ -53,6 +57,9 @@ class BranchService:
 
     def update_branch(self, branch_id: int, update_data: dict) -> Optional[Dict[str, Any]]:
         """Update branch."""
+        update_data = self._sanitize_branch_data(update_data)
+        self._validate_branch_data(update_data, require_required=False)
+
         # Check for name uniqueness if name is being updated
         if "name" in update_data:
             if self.repository.name_exists(update_data["name"], exclude_id=branch_id):
@@ -86,3 +93,22 @@ class BranchService:
         """Get all active branches."""
         branches = self.repository.get_all(limit=1000)
         return [b.to_dict() for b in branches]
+
+    def _sanitize_branch_data(self, branch_data: dict) -> dict:
+        """Normalize branch input before persistence."""
+        data = branch_data.copy()
+        if "name" in data and data["name"]:
+            data["name"] = data["name"].strip()
+        if "address" in data and data["address"] is not None:
+            data["address"] = data["address"].strip()
+        return data
+
+    def _validate_branch_data(self, branch_data: dict, require_required: bool) -> None:
+        """Validate branch fields used by create and update operations."""
+        if require_required or "name" in branch_data:
+            is_valid, error = validate_name(branch_data.get("name"), "Nombre")
+            if not is_valid:
+                raise ValueError(error)
+
+        if branch_data.get("address") and len(branch_data["address"]) > 255:
+            raise ValueError("La direccion no puede tener mas de 255 caracteres")

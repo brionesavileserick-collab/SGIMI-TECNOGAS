@@ -45,9 +45,21 @@ class AlertHandlers:
 
             if data.get("is_low_stock"):
                 self._create_low_stock_alert(product_id, branch_id, digital_stock, data.get("min_stock", 0))
+            else:
+                self.service.resolve_open_alert(
+                    alert_type="low_stock",
+                    product_id=product_id,
+                    branch_id=branch_id
+                )
 
             if data.get("has_discrepancy"):
                 self._create_discrepancy_alert(product_id, branch_id, physical_stock, digital_stock)
+            else:
+                self.service.resolve_open_alert(
+                    alert_type="discrepancy",
+                    product_id=product_id,
+                    branch_id=branch_id
+                )
 
         except Exception as e:
             logger.error(f"Error handling inventory.updated for alerts: {e}")
@@ -62,6 +74,14 @@ class AlertHandlers:
     def _create_low_stock_alert(self, product_id: int, branch_id: int,
                                   current_stock: int, min_stock: int):
         """Create low stock alert."""
+        existing_alert = self.service.get_open_alert(
+            alert_type="low_stock",
+            product_id=product_id,
+            branch_id=branch_id
+        )
+        if existing_alert:
+            return
+
         alert_data = self.service.create_alert(
             alert_type="low_stock",
             severity="warning",
@@ -77,6 +97,14 @@ class AlertHandlers:
     def _create_discrepancy_alert(self, product_id: int, branch_id: int,
                                     physical_stock: int, digital_stock: int):
         """Create discrepancy alert."""
+        existing_alert = self.service.get_open_alert(
+            alert_type="discrepancy",
+            product_id=product_id,
+            branch_id=branch_id
+        )
+        if existing_alert:
+            return
+
         difference = physical_stock - digital_stock
 
         alert_data = self.service.create_alert(

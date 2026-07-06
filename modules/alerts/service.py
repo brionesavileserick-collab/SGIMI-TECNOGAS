@@ -76,6 +76,32 @@ class AlertService:
         logger.info(f"Alert created: {title}")
         return alert.to_dict()
 
+    def get_open_alert(self, alert_type: str, product_id: int = None,
+                       branch_id: int = None, movement_id: int = None) -> Optional[Dict[str, Any]]:
+        """Get an existing unresolved alert for the same operational condition."""
+        query = self.db.query(Alert).filter(
+            Alert.alert_type == alert_type,
+            Alert.is_resolved == False
+        )
+
+        if product_id is None:
+            query = query.filter(Alert.product_id.is_(None))
+        else:
+            query = query.filter(Alert.product_id == product_id)
+
+        if branch_id is None:
+            query = query.filter(Alert.branch_id.is_(None))
+        else:
+            query = query.filter(Alert.branch_id == branch_id)
+
+        if movement_id is None:
+            query = query.filter(Alert.movement_id.is_(None))
+        else:
+            query = query.filter(Alert.movement_id == movement_id)
+
+        alert = query.order_by(Alert.created_at.desc()).first()
+        return alert.to_dict() if alert else None
+
     def get_alert(self, alert_id: int) -> Optional[Dict[str, Any]]:
         """Get alert by ID."""
         alert = self.db.query(Alert).filter(Alert.id == alert_id).first()
@@ -120,6 +146,14 @@ class AlertService:
         alert.resolved_at = datetime.utcnow()
         self.db.commit()
         return True
+
+    def resolve_open_alert(self, alert_type: str, product_id: int = None,
+                           branch_id: int = None, movement_id: int = None) -> bool:
+        """Resolve an existing unresolved alert for the same operational condition."""
+        alert = self.get_open_alert(alert_type, product_id, branch_id, movement_id)
+        if not alert:
+            return False
+        return self.resolve_alert(alert["id"])
 
     def delete_alert(self, alert_id: int) -> bool:
         """Delete alert."""
