@@ -1,0 +1,83 @@
+2026-07-06 10:31:24 - core.database - INFO - init_db - Database initialized successfully
+2026-07-06 10:31:37 - core.database - INFO - init_db - Database initialized successfully
+2026-07-06 10:31:37 - database.seed - INFO - seed_database - Created admin user: admin@tecnogas.com
+2026-07-06 10:31:37 - database.seed - INFO - seed_database - Created 3 sample users
+2026-07-06 10:31:37 - database.seed - INFO - seed_database - Created 4 branches
+2026-07-06 10:31:37 - database.seed - INFO - seed_database - Created 10 products
+2026-07-06 10:31:37 - database.seed - INFO - seed_database - Created 17 inventory records
+2026-07-06 10:31:37 - database.seed - INFO - seed_database - Database seeding completed successfully!
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_updated to event inventory.updated
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert_generated to event alert.generated
+2026-07-06 10:31:51 - modules.alerts.handlers - INFO - __init__ - Alert handlers registered
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_created to event product.created
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_updated to event product.updated
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_deleted to event product.deleted
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_created to event movement.created
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_updated to event inventory.updated
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_sent to event transfer.sent
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_received to event transfer.received
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert_generated to event alert.generated
+2026-07-06 10:31:51 - modules.history.handlers - INFO - __init__ - History handlers registered
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_received to event transfer.received
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_deleted to event product.deleted
+2026-07-06 10:31:51 - modules.inventory.handlers - INFO - _register_handlers - Inventory handlers registered
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_created to event movement.created
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_sent to event transfer.sent
+2026-07-06 10:31:51 - modules.movements.handlers - INFO - __init__ - Movement handlers registered
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.created
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.updated
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.deleted
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.created
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.validated
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.rejected
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_change to event inventory.updated
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_change to event inventory.counted
+2026-07-06 10:31:51 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert to event alert.generated
+2026-07-06 10:31:51 - modules.dashboard.handlers - INFO - __init__ - Dashboard handlers registered
+2026-07-06 10:32:38 - core.database - INFO - init_db - Database initialized successfully
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_updated to event inventory.updated
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert_generated to event alert.generated
+2026-07-06 10:32:38 - modules.alerts.handlers - INFO - __init__ - Alert handlers registered
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_created to event product.created
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_updated to event product.updated
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_deleted to event product.deleted
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_created to event movement.created
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_updated to event inventory.updated
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_sent to event transfer.sent
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_received to event transfer.received
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert_generated to event alert.generated
+2026-07-06 10:32:38 - modules.history.handlers - INFO - __init__ - History handlers registered
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_received to event transfer.received
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_deleted to event product.deleted
+2026-07-06 10:32:38 - modules.inventory.handlers - INFO - _register_handlers - Inventory handlers registered
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_created to event movement.created
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_sent to event transfer.sent
+2026-07-06 10:32:38 - modules.movements.handlers - INFO - __init__ - Movement handlers registered
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.created
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.updated
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.deleted
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.created
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.validated
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.rejected
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_change to event inventory.updated
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_change to event inventory.counted
+2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert to event alert.generated
+2026-07-06 10:32:38 - modules.dashboard.handlers - INFO - __init__ - Dashboard handlers registered
