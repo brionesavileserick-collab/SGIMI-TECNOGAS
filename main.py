@@ -45,6 +45,7 @@ from modules.movements.routes import MovementListView
 from modules.alerts.routes import AlertListView
 from modules.history.routes import HistoryListView
 from modules.reports.routes import ReportsView
+from modules.user.routes import UserListView
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,29 @@ class LoginDialog(QDialog):
 
         layout.addLayout(button_layout)
 
+        # Register link
+        register_layout = QHBoxLayout()
+        register_label = QLabel("¿No tienes cuenta?")
+        register_button = QPushButton("Registrarse")
+        register_button.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #2196F3;
+                border: none;
+                padding: 5px;
+                font-size: 12px;
+                text-decoration: underline;
+            }
+            QPushButton:hover {
+                color: #1976D2;
+            }
+        """)
+        register_button.clicked.connect(self.open_register_dialog)
+        register_layout.addWidget(register_label)
+        register_layout.addWidget(register_button)
+        register_layout.addStretch()
+        layout.addLayout(register_layout)
+
         self.setLayout(layout)
 
     def attempt_login(self):
@@ -142,6 +166,106 @@ class LoginDialog(QDialog):
             self.accept()
         else:
             QMessageBox.warning(self, "Error", "Credenciales incorrectas")
+
+    def open_register_dialog(self):
+        """Open registration dialog."""
+        register_dialog = RegisterDialog(self.db, self)
+        if register_dialog.exec() == QDialog.DialogCode.Accepted:
+            QMessageBox.information(self, "Exito", "Cuenta creada exitosamente. Ahora puedes iniciar sesion.")
+            # Auto-fill login with registered email
+            self.email_input.setText(register_dialog.registered_email)
+
+
+class RegisterDialog(QDialog):
+    """Dialog for user registration."""
+
+    def __init__(self, db, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.registered_email = None
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Setup registration dialog UI."""
+        self.setWindowTitle("SGIMI TECNOGAS - Registrarse")
+        self.setFixedWidth(440)
+        self.setFixedHeight(330)
+
+        layout = QVBoxLayout()
+
+        title = QLabel("Crear nueva cuenta")
+        title.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        subtitle = QLabel("Complete el formulario para crear su cuenta")
+        subtitle.setWordWrap(True)
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(subtitle)
+
+        form_layout = QFormLayout()
+
+        self.name_input = QLineEdit()
+        form_layout.addRow("Nombre*:", self.name_input)
+
+        self.email_input = QLineEdit()
+        form_layout.addRow("Correo*:", self.email_input)
+
+        self.password_input = QLineEdit()
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        form_layout.addRow("Contrasena*:", self.password_input)
+
+        self.confirm_password_input = QLineEdit()
+        self.confirm_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.confirm_password_input.returnPressed.connect(self.register_user)
+        form_layout.addRow("Confirmar*:", self.confirm_password_input)
+
+        layout.addLayout(form_layout)
+
+        self.register_button = QPushButton("Registrarse")
+        self.register_button.clicked.connect(self.register_user)
+        layout.addWidget(self.register_button)
+
+        self.setLayout(layout)
+
+    def register_user(self):
+        """Register a new user."""
+        name = self.name_input.text().strip()
+        email = self.email_input.text().strip().lower()
+        password = self.password_input.text()
+        confirm_password = self.confirm_password_input.text()
+
+        validations = [
+            validate_name(name, "Nombre"),
+            validate_email(email),
+            validate_password(password, settings.PASSWORD_MIN_LENGTH),
+        ]
+        for is_valid, error in validations:
+            if not is_valid:
+                QMessageBox.warning(self, "Error", error)
+                return
+
+        if password != confirm_password:
+            QMessageBox.warning(self, "Error", "Las contrasenas no coinciden")
+            return
+
+        if self.db.query(User).filter(User.email == email).first():
+            QMessageBox.warning(self, "Error", "Ya existe un usuario con ese correo")
+            return
+
+        try:
+            user = User(name=name, email=email)
+            user.set_password(password)
+            self.db.add(user)
+            self.db.commit()
+            self.db.refresh(user)
+            self.registered_email = email
+            QMessageBox.information(self, "Exito", "Cuenta creada exitosamente")
+            self.accept()
+        except Exception as e:
+            self.db.rollback()
+            logger.exception(f"Error creating user: {e}")
+            QMessageBox.critical(self, "Error", f"No se pudo crear la cuenta: {str(e)}")
 
 
 class FirstRunDialog(QDialog):
@@ -330,6 +454,7 @@ class MainWindow(QMainWindow):
             ("Alertas", "!"),
             ("Historial", "H"),
             ("Reportes", "R"),
+            ("Usuarios", "👤"),
         ]
 
         for text, icon in nav_items:
@@ -442,6 +567,10 @@ class MainWindow(QMainWindow):
         self.reports_view = ReportsView(self.db)
         self.content_stack.addWidget(self.reports_view)
 
+        # Users
+        self.users_view = UserListView(self.db)
+        self.content_stack.addWidget(self.users_view)
+
     def setup_handlers(self):
         """Setup all event handlers."""
         # Initialize handlers from each module
@@ -464,6 +593,7 @@ class MainWindow(QMainWindow):
             "Alertas": 5,
             "Historial": 6,
             "Reportes": 7,
+            "Usuarios": 8,
         }
 
         if view_name in view_index:
@@ -486,6 +616,8 @@ class MainWindow(QMainWindow):
             current_widget.load_inventory()
         elif hasattr(current_widget, 'load_movements'):
             current_widget.load_movements()
+        elif hasattr(current_widget, 'load_users'):
+            current_widget.load_users()
 
         self.update_alerts_count()
         self.statusBar().showMessage("Vista actualizada", 2000)
