@@ -113,8 +113,21 @@ def build_executable(onefile=False, target=None):
     cmd.extend(['--name', APP_NAME])
     cmd.extend(['--distpath', str(dist_dir)])
 
-    if target == 'darwin':
+    # Add icon based on platform
+    icon_path = project_root / 'assets'
+    if target == 'windows':
+        icon_file = icon_path / 'icon.ico'
+        if icon_file.exists():
+            cmd.extend(['--icon', str(icon_file)])
+    elif target == 'darwin':
         cmd.extend(['--osx-bundle-identifier', 'com.tecnogas.sgimi'])
+        icon_file = icon_path / 'icon_temp.png'
+        if icon_file.exists():
+            cmd.extend(['--icon', str(icon_file)])
+    elif target == 'linux':
+        icon_file = icon_path / 'icon.png'
+        if icon_file.exists():
+            cmd.extend(['--icon', str(icon_file)])
 
     hidden_imports = [
         'PyQt6',
@@ -155,14 +168,18 @@ def build_executable(onefile=False, target=None):
     return True
 
 
-def create_distribution_package():
+def create_distribution_package(target=None, onefile=False):
     """
     Create distribution package with executable, README, and LICENSE.
     """
-    dist_dir = Path(f'dist/{APP_NAME}_Distribution')
-    exe_dir = Path(f'dist/{APP_NAME}')
+    target = normalize_target(target)
+    project_root = Path(__file__).resolve().parent
+    dist_dir = Path(f'dist/{APP_NAME}_Distribution_{target}')
+    
+    output_name = get_output_name(target)
+    exe_path = Path(f'dist/{target}/{output_name}')
 
-    if not exe_dir.exists():
+    if not exe_path.exists():
         print("No executable found. Build first.")
         return False
 
@@ -173,8 +190,17 @@ def create_distribution_package():
         shutil.rmtree(dist_dir)
     dist_dir.mkdir(parents=True)
 
-    # Copy executable
-    shutil.copytree(exe_dir, dist_dir / 'Application')
+    # Copy executable or directory
+    if onefile:
+        shutil.copy2(exe_path, dist_dir / output_name)
+    else:
+        shutil.copytree(exe_path, dist_dir / 'Application')
+
+    # Copy LICENSE file if exists
+    license_file = project_root / 'LICENSE'
+    if license_file.exists():
+        shutil.copy2(license_file, dist_dir / 'LICENSE.txt')
+        print("LICENSE file included in distribution.")
 
     # Create README
     readme_content = """# SGIMI TECNOGAS
@@ -272,7 +298,7 @@ def main():
 
     if build_executable(onefile=onefile, target=target):
         if create_dist:
-            create_distribution_package()
+            create_distribution_package(target=target, onefile=onefile)
 
         print("\n" + "=" * 60)
         print("Build complete!")

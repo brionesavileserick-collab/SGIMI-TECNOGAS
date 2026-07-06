@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI TECNOGAS\\main.py'],
+    ['C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI TECNOGAS\\main.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -10,7 +10,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['tkinter', 'matplotlib', 'numpy', 'pandas', 'scipy'],
     noarchive=False,
     optimize=0,
 )
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI TECNOGAS\\assets\\icon.ico'],
 )

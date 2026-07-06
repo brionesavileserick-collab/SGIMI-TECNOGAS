@@ -1,7 +1,7 @@
 ('C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
  'TECNOGAS\\build\\SGIMI_TECNOGAS\\PYZ-00.pyz',
  [('PyQt6',
-   'C:\\Users\\LENOVO\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyQt6\\__init__.py',
+   'C:\\Users\\LENOVO\\AppData\\Roaming\\Python\\Python311\\site-packages\\PyQt6\\__init__.py',
    'PYMODULE'),
   ('__future__',
    'C:\\Users\\LENOVO\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\__future__.py',
@@ -160,7 +160,7 @@
    'C:\\Users\\LENOVO\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\concurrent\\futures\\thread.py',
    'PYMODULE'),
   ('config',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\config.py',
    'PYMODULE'),
   ('configparser',
@@ -176,19 +176,19 @@
    'C:\\Users\\LENOVO\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\copy.py',
    'PYMODULE'),
   ('core',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\core\\__init__.py',
    'PYMODULE'),
   ('core.database',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\core\\database.py',
    'PYMODULE'),
   ('core.event_bus',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\core\\event_bus.py',
    'PYMODULE'),
   ('core.settings',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\core\\settings.py',
    'PYMODULE'),
   ('csv',
@@ -417,140 +417,140 @@
    'C:\\Users\\LENOVO\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\mimetypes.py',
    'PYMODULE'),
   ('models',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\models\\__init__.py',
    'PYMODULE'),
   ('models.branch',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\models\\branch.py',
    'PYMODULE'),
   ('models.inventory',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\models\\inventory.py',
    'PYMODULE'),
   ('models.movement',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\models\\movement.py',
    'PYMODULE'),
   ('models.product',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\models\\product.py',
    'PYMODULE'),
   ('models.user',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\models\\user.py',
    'PYMODULE'),
   ('modules', '-', 'PYMODULE'),
   ('modules.alerts', '-', 'PYMODULE'),
   ('modules.alerts.handlers',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\alerts\\handlers.py',
    'PYMODULE'),
   ('modules.alerts.routes',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\alerts\\routes.py',
    'PYMODULE'),
   ('modules.alerts.service',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\alerts\\service.py',
    'PYMODULE'),
   ('modules.branches', '-', 'PYMODULE'),
   ('modules.branches.repository',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\branches\\repository.py',
    'PYMODULE'),
   ('modules.branches.routes',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\branches\\routes.py',
    'PYMODULE'),
   ('modules.branches.service',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\branches\\service.py',
    'PYMODULE'),
   ('modules.dashboard', '-', 'PYMODULE'),
   ('modules.dashboard.handlers',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\dashboard\\handlers.py',
    'PYMODULE'),
   ('modules.dashboard.routes',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\dashboard\\routes.py',
    'PYMODULE'),
   ('modules.dashboard.service',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\dashboard\\service.py',
    'PYMODULE'),
   ('modules.history', '-', 'PYMODULE'),
   ('modules.history.handlers',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\history\\handlers.py',
    'PYMODULE'),
   ('modules.history.routes',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\history\\routes.py',
    'PYMODULE'),
   ('modules.history.service',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\history\\service.py',
    'PYMODULE'),
   ('modules.inventory', '-', 'PYMODULE'),
   ('modules.inventory.handlers',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\inventory\\handlers.py',
    'PYMODULE'),
   ('modules.inventory.repository',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\inventory\\repository.py',
    'PYMODULE'),
   ('modules.inventory.routes',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\inventory\\routes.py',
    'PYMODULE'),
   ('modules.inventory.service',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\inventory\\service.py',
    'PYMODULE'),
   ('modules.movements', '-', 'PYMODULE'),
   ('modules.movements.handlers',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\movements\\handlers.py',
    'PYMODULE'),
   ('modules.movements.repository',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\movements\\repository.py',
    'PYMODULE'),
   ('modules.movements.routes',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\movements\\routes.py',
    'PYMODULE'),
   ('modules.movements.service',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\movements\\service.py',
    'PYMODULE'),
   ('modules.products', '-', 'PYMODULE'),
   ('modules.products.repository',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\products\\repository.py',
    'PYMODULE'),
   ('modules.products.routes',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\products\\routes.py',
    'PYMODULE'),
   ('modules.products.service',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\products\\service.py',
    'PYMODULE'),
   ('modules.reports', '-', 'PYMODULE'),
   ('modules.reports.routes',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\reports\\routes.py',
    'PYMODULE'),
   ('modules.reports.service',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\reports\\service.py',
    'PYMODULE'),
   ('modules.user',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\user\\__init__.py',
    'PYMODULE'),
   ('multiprocessing',
@@ -1332,7 +1332,7 @@
    'PYMODULE'),
   ('utils', '-', 'PYMODULE'),
   ('utils.validators',
-   'c:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\utils\\validators.py',
    'PYMODULE'),
   ('uuid',

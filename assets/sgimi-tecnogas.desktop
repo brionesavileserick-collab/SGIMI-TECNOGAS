@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=SGIMI TECNOGAS
+Comment=Sistema de Gestion de Inventario Multi-Sucursal
+Exec=SGIMI_TECNOGAS
+Icon=icon
+Terminal=false
+Categories=Office;Business;Inventory;
+Keywords=inventory;management;stock;business;
