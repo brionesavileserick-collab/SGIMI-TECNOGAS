@@ -25,7 +25,6 @@ class InventoryHandlers:
         event_bus.subscribe(settings.Events.MOVEMENT_VALIDATED, self.handle_movement_validated)
         event_bus.subscribe(settings.Events.INVENTORY_COUNTED, self.handle_inventory_counted)
         event_bus.subscribe(settings.Events.TRANSFER_RECEIVED, self.handle_transfer_received)
-        event_bus.subscribe(settings.Events.PRODUCT_DELETED, self.handle_product_deleted)
         logger.info("Inventory handlers registered")
 
     def handle_movement_validated(self, data: Dict[str, Any]):
@@ -59,6 +58,11 @@ class InventoryHandlers:
                 # Set absolute digital stock
                 self.service.adjust_digital_stock(product_id, branch_id, quantity, is_absolute=True)
                 logger.info(f"Stock adjusted: Product {product_id}, Branch {branch_id}, = {quantity}")
+
+            elif movement_type == "transferencia":
+                # Decrease digital stock at origin; destination is updated by transfer.received.
+                self.service.adjust_digital_stock(product_id, branch_id, -quantity, is_absolute=False)
+                logger.info(f"Transfer sent: Product {product_id}, Branch {branch_id}, -{quantity}")
 
         except Exception as e:
             logger.error(f"Error handling movement.validated: {e}")
@@ -110,32 +114,11 @@ class InventoryHandlers:
         except Exception as e:
             logger.error(f"Error handling transfer.received: {e}")
 
-    def handle_product_deleted(self, data: Dict[str, Any]):
-        """
-        Handle product.deleted event.
-        Soft deletes inventory records for the deleted product.
-        """
-        try:
-            product_id = data.get("product_id")
-            if not product_id:
-                return
-
-            # Soft delete all inventory for this product
-            items = self.service.list_inventory(page=1, page_size=1000, product_id=product_id)
-            for item in items["inventory"]:
-                self.service.delete_inventory(item["id"])
-
-            logger.info(f"Inventory deleted for product {product_id}")
-
-        except Exception as e:
-            logger.error(f"Error handling product.deleted: {e}")
-
     def unregister_handlers(self):
         """Unregister all event handlers."""
         event_bus.unsubscribe(settings.Events.MOVEMENT_VALIDATED, self.handle_movement_validated)
         event_bus.unsubscribe(settings.Events.INVENTORY_COUNTED, self.handle_inventory_counted)
         event_bus.unsubscribe(settings.Events.TRANSFER_RECEIVED, self.handle_transfer_received)
-        event_bus.unsubscribe(settings.Events.PRODUCT_DELETED, self.handle_product_deleted)
         logger.info("Inventory handlers unregistered")
 
 

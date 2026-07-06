@@ -21,25 +21,9 @@ class DashboardHandlers:
 
     def _register_handlers(self):
         """Register all event handlers."""
-        # Listen for all relevant events
-        event_bus.subscribe(settings.Events.PRODUCT_CREATED, self.handle_product_change)
-        event_bus.subscribe(settings.Events.PRODUCT_UPDATED, self.handle_product_change)
-        event_bus.subscribe(settings.Events.PRODUCT_DELETED, self.handle_product_change)
-
-        event_bus.subscribe(settings.Events.MOVEMENT_CREATED, self.handle_movement_change)
         event_bus.subscribe(settings.Events.MOVEMENT_VALIDATED, self.handle_movement_change)
-        event_bus.subscribe(settings.Events.MOVEMENT_REJECTED, self.handle_movement_change)
-
         event_bus.subscribe(settings.Events.INVENTORY_UPDATED, self.handle_inventory_change)
-        event_bus.subscribe(settings.Events.INVENTORY_COUNTED, self.handle_inventory_change)
-
         event_bus.subscribe(settings.Events.ALERT_GENERATED, self.handle_alert)
-
-    def handle_product_change(self, data: Dict[str, Any]):
-        """Handle product-related events."""
-        logger.info(f"Product change detected in dashboard: {data}")
-        # Dashboard metrics would be recalculated on next refresh
-        # In a real-time system, could push updates to connected clients
 
     def handle_movement_change(self, data: Dict[str, Any]):
         """Handle movement-related events."""
@@ -58,17 +42,8 @@ class DashboardHandlers:
 
     def unregister_handlers(self):
         """Unregister all event handlers."""
-        event_bus.unsubscribe(settings.Events.PRODUCT_CREATED, self.handle_product_change)
-        event_bus.unsubscribe(settings.Events.PRODUCT_UPDATED, self.handle_product_change)
-        event_bus.unsubscribe(settings.Events.PRODUCT_DELETED, self.handle_product_change)
-
-        event_bus.unsubscribe(settings.Events.MOVEMENT_CREATED, self.handle_movement_change)
         event_bus.unsubscribe(settings.Events.MOVEMENT_VALIDATED, self.handle_movement_change)
-        event_bus.unsubscribe(settings.Events.MOVEMENT_REJECTED, self.handle_movement_change)
-
         event_bus.unsubscribe(settings.Events.INVENTORY_UPDATED, self.handle_inventory_change)
-        event_bus.unsubscribe(settings.Events.INVENTORY_COUNTED, self.handle_inventory_change)
-
         event_bus.unsubscribe(settings.Events.ALERT_GENERATED, self.handle_alert)
         logger.info("Dashboard handlers unregistered")
 

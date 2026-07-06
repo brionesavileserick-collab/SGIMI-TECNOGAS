@@ -29,6 +29,7 @@ class InventoryService:
             raise ValueError(f"El inventario para este producto y sucursal ya existe")
 
         inventory = self.repository.create(inventory_data)
+        self._emit_inventory_updated(inventory)
         logger.info(f"Inventory created: Product {product_id} at Branch {branch_id}")
         return inventory.to_dict()
 
@@ -77,15 +78,7 @@ class InventoryService:
         if not inventory:
             return None
 
-        # Emit event
-        event_data = {
-            "inventory_id": inventory.id,
-            "product_id": inventory.product_id,
-            "branch_id": inventory.branch_id,
-            "physical_stock": inventory.physical_stock,
-            "digital_stock": inventory.digital_stock
-        }
-        event_bus.emit(settings.Events.INVENTORY_UPDATED, event_data)
+        self._emit_inventory_updated(inventory)
 
         logger.info(f"Inventory updated: ID {inventory_id}")
         return inventory.to_dict()
@@ -109,7 +102,6 @@ class InventoryService:
                 physical_stock=quantity
             )
 
-        # Emit inventory counted event
         event_data = {
             "product_id": product_id,
             "branch_id": branch_id,
@@ -117,6 +109,7 @@ class InventoryService:
             "inventory_id": inventory.id
         }
         event_bus.emit(settings.Events.INVENTORY_COUNTED, event_data)
+        self._emit_inventory_updated(inventory)
 
         logger.info(f"Physical stock adjusted: Product {product_id}, Branch {branch_id}, Quantity {quantity}")
         return inventory.to_dict() if inventory else None
@@ -130,19 +123,27 @@ class InventoryService:
             inventory = self.repository.update_stock(product_id, branch_id, digital_change=quantity)
 
         if inventory:
-            # Emit event
-            event_data = {
-                "inventory_id": inventory.id,
-                "product_id": inventory.product_id,
-                "branch_id": inventory.branch_id,
-                "physical_stock": inventory.physical_stock,
-                "digital_stock": inventory.digital_stock
-            }
-            event_bus.emit(settings.Events.INVENTORY_UPDATED, event_data)
+            self._emit_inventory_updated(inventory)
 
             logger.info(f"Digital stock adjusted: Product {product_id}, Branch {branch_id}, Change {quantity}")
 
         return inventory.to_dict() if inventory else None
+
+    def _emit_inventory_updated(self, inventory) -> None:
+        """Emit a complete inventory.updated payload for reactive consumers."""
+        event_data = {
+            "inventory_id": inventory.id,
+            "product_id": inventory.product_id,
+            "branch_id": inventory.branch_id,
+            "physical_stock": inventory.physical_stock,
+            "digital_stock": inventory.digital_stock,
+            "difference": inventory.difference,
+            "has_discrepancy": inventory.has_discrepancy,
+            "is_low_stock": inventory.is_low_stock,
+            "min_stock": inventory.min_stock,
+            "max_stock": inventory.max_stock
+        }
+        event_bus.emit(settings.Events.INVENTORY_UPDATED, event_data)
 
     def delete_inventory(self, inventory_id: int) -> bool:
         """Soft delete inventory record."""

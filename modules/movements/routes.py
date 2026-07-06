@@ -328,8 +328,11 @@ class MovementListView(QWidget):
 
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                self.service.validate_movement(movement_id, self.current_user_id)
-                QMessageBox.information(self, "Exito", "Movimiento validado exitosamente")
+                movement = self.service.validate_movement(movement_id, self.current_user_id)
+                if movement and movement.get("state") == "rechazado":
+                    QMessageBox.warning(self, "Movimiento rechazado", "El movimiento fue rechazado por no cumplir la validacion")
+                else:
+                    QMessageBox.information(self, "Exito", "Movimiento validado exitosamente")
                 self.load_movements()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Error al validar movimiento: {str(e)}")

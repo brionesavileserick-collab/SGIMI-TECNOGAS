@@ -5,7 +5,6 @@ Movement service layer - Business logic and event emission.
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from modules.movements.repository import MovementRepository
-from modules.inventory.repository import InventoryRepository
 from core.event_bus import event_bus
 from core.settings import settings
 from datetime import datetime
@@ -18,8 +17,8 @@ class MovementService:
     """Service for movement business logic."""
 
     def __init__(self, db: Session):
+        self.db = db
         self.repository = MovementRepository(db)
-        self.inventory_repository = InventoryRepository(db)
 
     def create_movement(self, movement_data: dict) -> Dict[str, Any]:
         """Create a new movement and emit event."""
@@ -34,15 +33,6 @@ class MovementService:
                 raise ValueError("La transferencia requiere sucursal destino")
             if movement_data.get("branch_id") == movement_data.get("destination_branch_id"):
                 raise ValueError("La sucursal origen y destino no pueden ser la misma")
-
-        # Validate stock for salida
-        if movement_data.get("movement_type") == "salida":
-            inventory = self.inventory_repository.get_by_product_branch(
-                movement_data.get("product_id"),
-                movement_data.get("branch_id")
-            )
-            if not inventory or inventory.digital_stock < movement_data.get("quantity", 0):
-                raise ValueError("Stock insuficiente para esta salida")
 
         # Create movement
         movement = self.repository.create(movement_data)
@@ -123,6 +113,22 @@ class MovementService:
         if movement.state != "pendiente":
             raise ValueError("Solo movimientos pendientes pueden ser validados")
 
+        validation_error = self._get_validation_error(movement)
+        if validation_error:
+            movement = self.repository.reject(movement_id, validator_id, validation_error)
+            event_data = {
+                "movement_id": movement.id,
+                "product_id": movement.product_id,
+                "branch_id": movement.branch_id,
+                "movement_type": movement.movement_type,
+                "quantity": movement.quantity,
+                "validator_id": validator_id,
+                "reason": validation_error
+            }
+            event_bus.emit(settings.Events.MOVEMENT_REJECTED, event_data)
+            logger.info(f"Movement rejected during validation: ID {movement_id}, Reason: {validation_error}")
+            return movement.to_dict()
+
         # Validate movement
         movement = self.repository.validate(movement_id, validator_id)
 
@@ -151,6 +157,24 @@ class MovementService:
 
         logger.info(f"Movement validated: ID {movement_id}")
         return movement.to_dict()
+
+    def _get_validation_error(self, movement) -> Optional[str]:
+        """Validate movement constraints without updating inventory state."""
+        if movement.movement_type not in ("salida", "transferencia"):
+            return None
+
+        from models.inventory import Inventory
+
+        inventory = self.db.query(Inventory).filter(
+            Inventory.product_id == movement.product_id,
+            Inventory.branch_id == movement.branch_id,
+            Inventory.is_active == True
+        ).first()
+
+        if not inventory or inventory.digital_stock < movement.quantity:
+            return "Stock digital insuficiente para validar el movimiento"
+
+        return None
 
     def reject_movement(self, movement_id: int, validator_id: int, reason: str = None) -> Optional[Dict[str, Any]]:
         """Reject a pending movement and emit event."""
