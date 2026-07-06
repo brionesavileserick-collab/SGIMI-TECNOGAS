@@ -43,6 +43,8 @@ from modules.movements.routes import MovementListView
 
 logger = logging.getLogger(__name__)
 
+LOGOUT_TEXT = "Cerrar Sesion"
+
 
 class LoginDialog(QDialog):
     """Login dialog for user authentication."""
@@ -254,7 +256,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(user_label)
 
         # Logout button
-        logout_btn = QPushButton("Cerrar Sesion")
+        logout_btn = QPushButton(LOGOUT_TEXT)
         logout_btn.clicked.connect(self.logout)
         layout.addWidget(logout_btn)
 
@@ -267,7 +269,7 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu("Archivo")
 
-        logout_action = QAction("Cerrar Sesion", self)
+        logout_action = QAction(LOGOUT_TEXT, self)
         logout_action.triggered.connect(self.logout)
         file_menu.addAction(logout_action)
 
@@ -391,7 +393,7 @@ class MainWindow(QMainWindow):
             else:
                 self.alerts_label.setStyleSheet("padding: 5px;")
         except Exception as e:
-            logger.error(f"Error updating alerts count: {e}")
+            logger.exception(f"Error updating alerts count: {e}")
 
     def show_about(self):
         """Show about dialog."""
@@ -412,7 +414,7 @@ class MainWindow(QMainWindow):
         """Logout user and return to login screen."""
         reply = QMessageBox.question(
             self,
-            "Cerrar Sesion",
+            LOGOUT_TEXT,
             "¿Esta seguro de cerrar sesion?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
@@ -484,7 +486,7 @@ def run_application():
         sys.exit(exit_code)
 
     except Exception as e:
-        logger.error(f"Application error: {e}", exc_info=True)
+        logger.exception(f"Application error: {e}")
         QMessageBox.critical(None, "Error", f"Error de aplicacion: {str(e)}")
         db.close()
         sys.exit(1)

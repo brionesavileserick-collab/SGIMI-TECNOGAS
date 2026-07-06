@@ -81,3 +81,140 @@
 2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_change to event inventory.counted
 2026-07-06 10:32:38 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert to event alert.generated
 2026-07-06 10:32:38 - modules.dashboard.handlers - INFO - __init__ - Dashboard handlers registered
+2026-07-06 05:49:00 - __main__ - INFO - run_application - Starting SGIMI TECNOGAS...
+2026-07-06 05:49:00 - core.database - INFO - init_db - Database initialized successfully
+2026-07-06 05:49:00 - __main__ - INFO - run_application - Database initialized
+2026-07-06 05:49:28 - __main__ - INFO - run_application - User authenticated: admin@tecnogas.com
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_received to event transfer.received
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_deleted to event product.deleted
+2026-07-06 05:49:28 - modules.inventory.handlers - INFO - _register_handlers - Inventory handlers registered
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_created to event movement.created
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_sent to event transfer.sent
+2026-07-06 05:49:28 - modules.movements.handlers - INFO - __init__ - Movement handlers registered
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_updated to event inventory.updated
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert_generated to event alert.generated
+2026-07-06 05:49:28 - modules.alerts.handlers - INFO - __init__ - Alert handlers registered
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_created to event product.created
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_updated to event product.updated
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_deleted to event product.deleted
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_created to event movement.created
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_updated to event inventory.updated
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_sent to event transfer.sent
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_received to event transfer.received
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert_generated to event alert.generated
+2026-07-06 05:49:28 - modules.history.handlers - INFO - __init__ - History handlers registered
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.created
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.updated
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.deleted
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.created
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.validated
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.rejected
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_change to event inventory.updated
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_change to event inventory.counted
+2026-07-06 05:49:28 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert to event alert.generated
+2026-07-06 05:49:28 - modules.dashboard.handlers - INFO - __init__ - Dashboard handlers registered
+2026-07-06 05:49:28 - __main__ - INFO - setup_handlers - All event handlers registered
+2026-07-06 05:49:30 - __main__ - INFO - run_application - Application running...
+2026-07-06 05:49:43 - core.event_bus - INFO - emit - Event emitted: product.deleted
+2026-07-06 05:49:43 - modules.inventory.handlers - INFO - handle_product_deleted - Inventory deleted for product 1
+2026-07-06 05:49:43 - modules.history.service - INFO - record_event - History recorded: product.deleted
+2026-07-06 05:49:43 - modules.dashboard.handlers - INFO - handle_product_change - Product change detected in dashboard: {'product_id': 1, 'sku': 'GAS-001', 'name': 'Gas Natural - Cilindro 25kg'}
+2026-07-06 05:49:43 - modules.products.service - INFO - delete_product - Product deleted: GAS-001
+2026-07-06 05:49:46 - core.event_bus - INFO - emit - Event emitted: product.deleted
+2026-07-06 05:49:46 - modules.inventory.handlers - INFO - handle_product_deleted - Inventory deleted for product 2
+2026-07-06 05:49:46 - modules.history.service - INFO - record_event - History recorded: product.deleted
+2026-07-06 05:49:46 - modules.dashboard.handlers - INFO - handle_product_change - Product change detected in dashboard: {'product_id': 2, 'sku': 'GAS-002', 'name': 'Gas Natural - Cilindro 45kg'}
+2026-07-06 05:49:46 - modules.products.service - INFO - delete_product - Product deleted: GAS-002
+2026-07-06 05:49:51 - core.event_bus - INFO - emit - Event emitted: product.deleted
+2026-07-06 05:49:51 - modules.inventory.handlers - INFO - handle_product_deleted - Inventory deleted for product 3
+2026-07-06 05:49:51 - modules.history.service - INFO - record_event - History recorded: product.deleted
+2026-07-06 05:49:51 - modules.dashboard.handlers - INFO - handle_product_change - Product change detected in dashboard: {'product_id': 3, 'sku': 'GAS-003', 'name': 'Gas Natural - Cilindro 90kg'}
+2026-07-06 05:49:51 - modules.products.service - INFO - delete_product - Product deleted: GAS-003
+2026-07-06 05:49:54 - core.event_bus - INFO - emit - Event emitted: product.deleted
+2026-07-06 05:49:54 - modules.inventory.handlers - INFO - handle_product_deleted - Inventory deleted for product 4
+2026-07-06 05:49:54 - modules.history.service - INFO - record_event - History recorded: product.deleted
+2026-07-06 05:49:54 - modules.dashboard.handlers - INFO - handle_product_change - Product change detected in dashboard: {'product_id': 4, 'sku': 'GAS-004', 'name': 'Gas LP - Tanque 100L'}
+2026-07-06 05:49:54 - modules.products.service - INFO - delete_product - Product deleted: GAS-004
+2026-07-06 05:49:57 - core.event_bus - INFO - emit - Event emitted: product.deleted
+2026-07-06 05:49:57 - modules.inventory.handlers - INFO - handle_product_deleted - Inventory deleted for product 5
+2026-07-06 05:49:57 - modules.history.service - INFO - record_event - History recorded: product.deleted
+2026-07-06 05:49:57 - modules.dashboard.handlers - INFO - handle_product_change - Product change detected in dashboard: {'product_id': 5, 'sku': 'GAS-005', 'name': 'Gas LP - Tanque 200L'}
+2026-07-06 05:49:57 - modules.products.service - INFO - delete_product - Product deleted: GAS-005
+2026-07-06 05:50:01 - core.event_bus - INFO - emit - Event emitted: product.deleted
+2026-07-06 05:50:01 - modules.inventory.handlers - INFO - handle_product_deleted - Inventory deleted for product 6
+2026-07-06 05:50:01 - modules.history.service - INFO - record_event - History recorded: product.deleted
+2026-07-06 05:50:01 - modules.dashboard.handlers - INFO - handle_product_change - Product change detected in dashboard: {'product_id': 6, 'sku': 'REG-001', 'name': 'Regulador de Presion Estndar'}
+2026-07-06 05:50:01 - modules.products.service - INFO - delete_product - Product deleted: REG-001
+2026-07-06 05:50:05 - core.event_bus - INFO - emit - Event emitted: product.deleted
+2026-07-06 05:50:05 - modules.inventory.handlers - INFO - handle_product_deleted - Inventory deleted for product 7
+2026-07-06 05:50:05 - modules.history.service - INFO - record_event - History recorded: product.deleted
+2026-07-06 05:50:05 - modules.dashboard.handlers - INFO - handle_product_change - Product change detected in dashboard: {'product_id': 7, 'sku': 'REG-002', 'name': 'Regulador de Presion Industrial'}
+2026-07-06 05:50:05 - modules.products.service - INFO - delete_product - Product deleted: REG-002
+2026-07-06 05:50:07 - core.event_bus - INFO - emit - Event emitted: product.deleted
+2026-07-06 05:50:07 - modules.inventory.handlers - INFO - handle_product_deleted - Inventory deleted for product 8
+2026-07-06 05:50:07 - modules.history.service - INFO - record_event - History recorded: product.deleted
+2026-07-06 05:50:07 - modules.dashboard.handlers - INFO - handle_product_change - Product change detected in dashboard: {'product_id': 8, 'sku': 'MAN-001', 'name': 'Manometro 0-30 PSI'}
+2026-07-06 05:50:07 - modules.products.service - INFO - delete_product - Product deleted: MAN-001
+2026-07-06 05:50:11 - core.event_bus - INFO - emit - Event emitted: product.deleted
+2026-07-06 05:50:11 - modules.inventory.handlers - INFO - handle_product_deleted - Inventory deleted for product 9
+2026-07-06 05:50:11 - modules.history.service - INFO - record_event - History recorded: product.deleted
+2026-07-06 05:50:11 - modules.dashboard.handlers - INFO - handle_product_change - Product change detected in dashboard: {'product_id': 9, 'sku': 'VAL-001', 'name': 'Valvula de Seguridad'}
+2026-07-06 05:50:11 - modules.products.service - INFO - delete_product - Product deleted: VAL-001
+2026-07-06 05:50:13 - core.event_bus - INFO - emit - Event emitted: product.deleted
+2026-07-06 05:50:13 - modules.inventory.handlers - INFO - handle_product_deleted - Inventory deleted for product 10
+2026-07-06 05:50:13 - modules.history.service - INFO - record_event - History recorded: product.deleted
+2026-07-06 05:50:13 - modules.dashboard.handlers - INFO - handle_product_change - Product change detected in dashboard: {'product_id': 10, 'sku': 'MNG-001', 'name': 'Manguera Flexible 1m'}
+2026-07-06 05:50:13 - modules.products.service - INFO - delete_product - Product deleted: MNG-001
+2026-07-06 05:51:29 - __main__ - INFO - run_application - Starting SGIMI TECNOGAS...
+2026-07-06 05:51:29 - core.database - INFO - init_db - Database initialized successfully
+2026-07-06 05:51:29 - __main__ - INFO - run_application - Database initialized
+2026-07-06 05:51:47 - __main__ - INFO - run_application - User authenticated: admin@tecnogas.com
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_received to event transfer.received
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_deleted to event product.deleted
+2026-07-06 05:51:48 - modules.inventory.handlers - INFO - _register_handlers - Inventory handlers registered
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_created to event movement.created
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_sent to event transfer.sent
+2026-07-06 05:51:48 - modules.movements.handlers - INFO - __init__ - Movement handlers registered
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_updated to event inventory.updated
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert_generated to event alert.generated
+2026-07-06 05:51:48 - modules.alerts.handlers - INFO - __init__ - Alert handlers registered
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_created to event product.created
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_updated to event product.updated
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_deleted to event product.deleted
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_created to event movement.created
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_validated to event movement.validated
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_rejected to event movement.rejected
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_updated to event inventory.updated
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_counted to event inventory.counted
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_sent to event transfer.sent
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_transfer_received to event transfer.received
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert_generated to event alert.generated
+2026-07-06 05:51:48 - modules.history.handlers - INFO - __init__ - History handlers registered
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.created
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.updated
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_product_change to event product.deleted
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.created
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.validated
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_movement_change to event movement.rejected
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_change to event inventory.updated
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_inventory_change to event inventory.counted
+2026-07-06 05:51:48 - core.event_bus - DEBUG - subscribe - Subscribed handler handle_alert to event alert.generated
+2026-07-06 05:51:48 - modules.dashboard.handlers - INFO - __init__ - Dashboard handlers registered
+2026-07-06 05:51:48 - __main__ - INFO - setup_handlers - All event handlers registered
+2026-07-06 05:51:49 - __main__ - INFO - run_application - Application running...
+2026-07-06 05:52:06 - __main__ - INFO - run_application - Application closed
