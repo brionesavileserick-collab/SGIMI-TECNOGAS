@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI TECNOGAS\\main.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[],

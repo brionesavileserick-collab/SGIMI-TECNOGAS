@@ -1,0 +1,3 @@
+"""
+Movements module initialization.
+"""
