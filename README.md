@@ -15,7 +15,7 @@ Sistema completo de gestion de inventario basado en arquitectura orientada a eve
 - **Reportes**: Informes de inventario, movimientos y discrepancias
 
 ### Requisitos del Sistema
-- Python 3.8 o superior
+- Python 3.11 o 3.12 recomendado para compilar ejecutables
 - SQLite 3.x
 - 4GB RAM minimo
 - 50MB espacio en disco
@@ -117,6 +117,8 @@ SGIMI TECNOGAS/
 
 PyInstaller genera binarios para el sistema operativo donde se ejecuta la compilacion. Para obtener una build compatible con Windows, macOS y Linux, ejecuta el script en cada sistema operativo con el destino correspondiente:
 
+Para empaquetar, usa preferentemente Python 3.11 o 3.12 con un entorno virtual limpio e instala `requirements.txt`.
+
 ```bash
 # Windows
 python build_exe.py --target windows --onefile
@@ -133,6 +135,8 @@ python build_exe.py --target windows --onefile --dist
 # Limpiar y compilar
 python build_exe.py --clean --target windows --onefile
 ```
+
+Nota: el parametro `--target` valida y organiza la salida, pero no realiza compilacion cruzada. El `.exe` debe generarse en Windows, el paquete macOS en macOS y el binario Linux en Linux.
 
 La base de datos y los logs se guardan en la carpeta de datos del usuario del sistema operativo, por lo que la aplicacion puede ejecutarse como sistema de escritorio instalado sin escribir dentro de la carpeta del programa.
 

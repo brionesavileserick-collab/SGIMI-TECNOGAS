@@ -45,6 +45,11 @@ def normalize_target(target=None):
     return aliases.get(str(target).strip().lower(), str(target).strip().lower())
 
 
+def get_host_target():
+    """Return the normalized platform for the current host."""
+    return normalize_target(platform.system())
+
+
 def get_output_name(target=None):
     """Return the expected output name for the requested platform."""
     target = normalize_target(target)
@@ -55,12 +60,27 @@ def get_output_name(target=None):
     return APP_NAME
 
 
+def validate_build_environment():
+    """Validate that the active Python environment can build the desktop app."""
+    try:
+        import PyInstaller  # noqa: F401
+        from PyQt6 import QtCore  # noqa: F401
+        import sqlalchemy  # noqa: F401
+    except Exception as exc:
+        print("Build environment is not ready.")
+        print("Use Python 3.11 or 3.12 with dependencies installed from requirements.txt.")
+        print(f"Import error: {exc}")
+        return False
+
+    return True
+
+
 def clean_build():
     """Clean build artifacts."""
     print("Cleaning build artifacts...")
 
     dirs_to_clean = ['build', 'dist', '__pycache__']
-    files_to_clean = ['*.spec']
+    ignored_dirs = {'.git', '.venv', 'venv', 'temp_pyqt_env', 'temp_pyqt_env_311', 'node_modules'}
 
     for dir_name in dirs_to_clean:
         if os.path.exists(dir_name):
@@ -69,6 +89,7 @@ def clean_build():
 
     # Remove __pycache__ directories recursively
     for root, dirs, files in os.walk('.'):
+        dirs[:] = [d for d in dirs if d not in ignored_dirs]
         if '__pycache__' in dirs:
             cache_dir = os.path.join(root, '__pycache__')
             shutil.rmtree(cache_dir)
@@ -86,13 +107,26 @@ def build_executable(onefile=False, target=None):
         target: Platform target (windows, darwin, linux)
     """
     target = normalize_target(target)
+    host_target = get_host_target()
     print("Building SGIMI TECNOGAS executable...")
     print(f"Target platform: {target}")
     print(f"Host platform: {platform.system()} {platform.architecture()[0]}")
 
+    if target != host_target:
+        print(
+            "Cross-platform PyInstaller builds are not supported. "
+            f"Run this build on {target} to generate that platform's package."
+        )
+        return False
+
     project_root = Path(__file__).resolve().parent
     dist_dir = project_root / 'dist' / target
+    spec_dir = project_root / 'build' / 'spec'
     dist_dir.mkdir(parents=True, exist_ok=True)
+    spec_dir.mkdir(parents=True, exist_ok=True)
+
+    if not validate_build_environment():
+        return False
 
     cmd = [
         sys.executable,
@@ -112,6 +146,7 @@ def build_executable(onefile=False, target=None):
     cmd.append('--windowed')
     cmd.extend(['--name', APP_NAME])
     cmd.extend(['--distpath', str(dist_dir)])
+    cmd.extend(['--specpath', str(spec_dir)])
 
     # Add icon based on platform
     icon_path = project_root / 'assets'

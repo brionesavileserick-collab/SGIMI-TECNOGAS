@@ -1,2 +1,11 @@
 node_modules/
 .env
+__pycache__/
+*.pyc
+build/
+dist/
+.venv/
+venv/
+temp_pyqt_env/
+temp_pyqt_env_311/
+SGIMI_TECNOGAS.spec
