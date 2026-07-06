@@ -163,31 +163,23 @@ class MovementRepository:
         from models.branch import Branch
         from models.user import User
 
-        result = self.db.query(
-            Movement, Product, Branch, User, Branch
-        ).join(
-            Product, Movement.product_id == Product.id
-        ).join(
-            Branch, Movement.branch_id == Branch.id
-        ).outerjoin(
-            User, Movement.user_id == User.id
-        ).outerjoin(
-            Branch, Movement.destination_branch_id == Branch.id
-        ).filter(Movement.id == movement_id).first()
-
-        if not result:
+        # Get movement first
+        movement = self.db.query(Movement).filter(Movement.id == movement_id).first()
+        if not movement:
             return None
 
-        movement = result[0]
-        product = result[1]
-        branch = result[2]
-        user = result[3] if len(result) > 3 else None
+        # Get related entities
+        product = self.db.query(Product).filter(Product.id == movement.product_id).first()
+        branch = self.db.query(Branch).filter(Branch.id == movement.branch_id).first()
+        user = self.db.query(User).filter(User.id == movement.user_id).first() if movement.user_id else None
+        dest_branch = self.db.query(Branch).filter(Branch.id == movement.destination_branch_id).first() if movement.destination_branch_id else None
 
         return {
             "movement": movement.to_dict(),
-            "product": product.to_dict(),
-            "branch": branch.to_dict(),
-            "user": user.to_dict() if user else None
+            "product": product.to_dict() if product else None,
+            "branch": branch.to_dict() if branch else None,
+            "user": user.to_dict() if user else None,
+            "destination_branch": dest_branch.to_dict() if dest_branch else None
         }
 
     def get_stats_by_type(self, branch_id: int = None, date_from: datetime = None) -> dict:

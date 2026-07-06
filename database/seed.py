@@ -155,8 +155,8 @@ def clear_database(db: Session = None):
         # Delete in reverse order of dependencies
         from models.movement import Movement
         from models.inventory import Inventory
-        from models.alerts.service import Alert
-        from models.history.service import HistoryEntry
+        from modules.alerts.service import Alert
+        from modules.history.service import HistoryEntry
 
         db.query(HistoryEntry).delete()
         db.query(Alert).delete()

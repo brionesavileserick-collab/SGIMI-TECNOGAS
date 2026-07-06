@@ -23,7 +23,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
 
     # Relationships
-    movements = relationship("Movement", back_populates="user")
+    movements = relationship("Movement", back_populates="user", foreign_keys="Movement.user_id")
 
     def __repr__(self):
         return f"<User(id={self.id}, name='{self.name}', email='{self.email}')>"
