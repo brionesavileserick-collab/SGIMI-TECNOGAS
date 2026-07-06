@@ -1,6 +1,5 @@
 # Core dependencies
 sqlalchemy==2.0.23
-pydantic==2.5.2
 
 # GUI Framework
 PyQt6==6.6.1

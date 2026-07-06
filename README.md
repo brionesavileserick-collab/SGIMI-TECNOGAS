@@ -22,6 +22,15 @@ Sistema completo de gestion de inventario basado en arquitectura orientada a eve
 
 ### Instalacion
 
+#### Desde Ejecutable
+1. Descarga el archivo para tu sistema operativo.
+2. Descomprime la carpeta si es necesario.
+3. Haz doble clic en el archivo ejecutable:
+   - Windows: `SGIMI_TECNOGAS.exe`
+   - macOS: `SGIMI_TECNOGAS.app`
+   - Linux: `SGIMI_TECNOGAS`
+4. Si aparece una advertencia de seguridad, confirma que deseas abrirlo.
+
 #### Desde Codigo Fuente
 ```bash
 # Clonar repositorio
@@ -40,13 +49,20 @@ pip install -r requirements.txt
 python main.py
 ```
 
-#### Desde Ejecutable
-1. Descargar el ejecutable para su plataforma
-2. Descomprimir el archivo
-3. Ejecutar `SGIMI_TECNOGAS.exe` (Windows) o `SGIMI_TECNOGAS` (Linux/Mac)
-
 ### Primer Uso
-Al abrir la aplicacion por primera vez, el sistema solicita crear el usuario inicial. No se instalan datos de prueba ni credenciales por defecto.
+Al abrir la aplicacion por primera vez, el sistema te pedira crear el usuario inicial.
+Solo debes completar:
+- Nombre
+- Correo
+- Contraseña
+- Confirmar contraseña
+
+Luego presiona Crear usuario.
+
+### Como Iniciar Sesion
+1. Escribe tu correo
+2. Escribe tu contraseña
+3. Presiona Iniciar Sesion
 
 ### Estructura del Proyecto
 ```
@@ -99,21 +115,23 @@ SGIMI TECNOGAS/
 
 ### Compilar Ejecutable
 
-PyInstaller genera binarios para el sistema operativo donde se ejecuta la compilacion:
-compile el `.exe` en Windows, el binario Linux en Linux y la app/binario macOS en macOS.
+PyInstaller genera binarios para el sistema operativo donde se ejecuta la compilacion. Para obtener una build compatible con Windows, macOS y Linux, ejecuta el script en cada sistema operativo con el destino correspondiente:
 
 ```bash
-# Compilar como directorio
-python build_exe.py
+# Windows
+python build_exe.py --target windows --onefile
 
-# Compilar como archivo unico
-python build_exe.py --onefile
+# macOS
+python build_exe.py --target darwin --onefile
+
+# Linux
+python build_exe.py --target linux --onefile
 
 # Crear paquete distribuible
-python build_exe.py --clean --dist
+python build_exe.py --target windows --onefile --dist
 
 # Limpiar y compilar
-python build_exe.py --clean --onefile
+python build_exe.py --clean --target windows --onefile
 ```
 
 La base de datos y los logs se guardan en la carpeta de datos del usuario del sistema operativo, por lo que la aplicacion puede ejecutarse como sistema de escritorio instalado sin escribir dentro de la carpeta del programa.

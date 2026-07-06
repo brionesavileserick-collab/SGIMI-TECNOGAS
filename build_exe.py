@@ -26,10 +26,32 @@ from pathlib import Path
 APP_NAME = 'SGIMI_TECNOGAS'
 
 
-def get_executable_name():
-    """Return the expected executable name for the current platform."""
-    if platform.system() == 'Windows':
+def normalize_target(target=None):
+    """Normalize a target platform name to a PyInstaller-friendly value."""
+    if target is None:
+        target = platform.system()
+
+    aliases = {
+        'windows': 'windows',
+        'win': 'windows',
+        'win32': 'windows',
+        'mac': 'darwin',
+        'macos': 'darwin',
+        'osx': 'darwin',
+        'darwin': 'darwin',
+        'linux': 'linux',
+        'linux2': 'linux',
+    }
+    return aliases.get(str(target).strip().lower(), str(target).strip().lower())
+
+
+def get_output_name(target=None):
+    """Return the expected output name for the requested platform."""
+    target = normalize_target(target)
+    if target == 'windows':
         return f'{APP_NAME}.exe'
+    if target == 'darwin':
+        return f'{APP_NAME}.app'
     return APP_NAME
 
 
@@ -55,17 +77,23 @@ def clean_build():
     print("Clean complete.")
 
 
-def build_executable(onefile=False):
+def build_executable(onefile=False, target=None):
     """
-    Build executable using PyInstaller.
+    Build executable using PyInstaller for the requested target platform.
 
     Args:
         onefile: If True, build single executable file
+        target: Platform target (windows, darwin, linux)
     """
+    target = normalize_target(target)
     print("Building SGIMI TECNOGAS executable...")
-    print(f"Platform: {platform.system()} {platform.architecture()[0]}")
+    print(f"Target platform: {target}")
+    print(f"Host platform: {platform.system()} {platform.architecture()[0]}")
 
-    # Build command
+    project_root = Path(__file__).resolve().parent
+    dist_dir = project_root / 'dist' / target
+    dist_dir.mkdir(parents=True, exist_ok=True)
+
     cmd = [
         sys.executable,
         '-m',
@@ -81,16 +109,13 @@ def build_executable(onefile=False):
         cmd.append('--onedir')
         print("Building as directory...")
 
-    # Add windowed mode (no console)
     cmd.append('--windowed')
-
-    # Add name
     cmd.extend(['--name', APP_NAME])
+    cmd.extend(['--distpath', str(dist_dir)])
 
-    # Add data files (if needed)
-    # cmd.extend(['--add-data', 'data;data'])
+    if target == 'darwin':
+        cmd.extend(['--osx-bundle-identifier', 'com.tecnogas.sgimi'])
 
-    # Add hidden imports
     hidden_imports = [
         'PyQt6',
         'PyQt6.QtCore',
@@ -106,19 +131,16 @@ def build_executable(onefile=False):
     for imp in hidden_imports:
         cmd.extend(['--hidden-import', imp])
 
-    # Exclude unnecessary modules
     excludes = ['tkinter', 'matplotlib', 'numpy', 'pandas', 'scipy']
     for exc in excludes:
         cmd.extend(['--exclude-module', exc])
 
-    # Add main script
-    cmd.append('main.py')
+    cmd.append(str(project_root / 'main.py'))
 
     print(f"Command: {' '.join(cmd[:10])}...")
     print("Building...")
 
-    # Run PyInstaller
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(project_root))
 
     if result.returncode != 0:
         print("Build failed!")
@@ -126,8 +148,9 @@ def build_executable(onefile=False):
         print("STDERR:", result.stderr)
         return False
 
+    output_name = get_output_name(target)
     print("Build successful!")
-    print(f"Output location: dist/{APP_NAME}")
+    print(f"Output location: {dist_dir / output_name}")
 
     return True
 
@@ -210,30 +233,44 @@ DISCREPANCY_THRESHOLD = 5
 
 def main():
     """Main build script."""
-    # Parse arguments
     args = sys.argv[1:]
 
     print("=" * 60)
     print("SGIMI TECNOGAS - Build Script")
     print("=" * 60)
 
-    # Handle options
-    clean = '--clean' in args
-    onefile = '--onefile' in args
-    create_dist = '--dist' in args
+    clean = False
+    onefile = False
+    create_dist = False
+    target = None
+    parsed_args = []
 
-    # Remove options from args
-    for opt in ['--clean', '--onefile', '--onedir', '--dist']:
-        if opt in args:
-            args.remove(opt)
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == '--clean':
+            clean = True
+        elif arg == '--onefile':
+            onefile = True
+        elif arg == '--onedir':
+            onefile = False
+        elif arg == '--dist':
+            create_dist = True
+        elif arg == '--target':
+            if i + 1 >= len(args):
+                raise SystemExit('Missing value for --target')
+            target = args[i + 1]
+            i += 1
+        elif arg.startswith('--target='):
+            target = arg.split('=', 1)[1]
+        else:
+            parsed_args.append(arg)
+        i += 1
 
-    # Clean if requested
     if clean:
         clean_build()
 
-    # Build executable
-    if build_executable(onefile=onefile):
-        # Create distribution package if requested
+    if build_executable(onefile=onefile, target=target):
         if create_dist:
             create_distribution_package()
 
