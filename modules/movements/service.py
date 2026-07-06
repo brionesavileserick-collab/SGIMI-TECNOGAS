@@ -311,3 +311,90 @@ class MovementService:
         result["user"] = details["user"]
         result["destination_branch"] = details.get("destination_branch")
         return result
+
+    def execute_direct_transfer(self, transfer_data: dict) -> Dict[str, Any]:
+        """
+        Execute a direct transfer between branches without approval flow.
+        This method:
+        1. Creates the movement record
+        2. Validates stock availability
+        3. Immediately deducts stock from origin
+        4. Immediately adds stock to destination
+        5. Emits appropriate events for real-time sync
+        """
+        transfer_data = self._sanitize_movement_data(transfer_data)
+        
+        # Ensure it's a transfer
+        if transfer_data.get("movement_type") != "transferencia":
+            raise ValueError("Este metodo es solo para transferencias")
+        
+        # Validate transfer data
+        self._validate_movement_data(transfer_data)
+        
+        # Check stock availability before proceeding
+        from models.inventory import Inventory
+        inventory = self.db.query(Inventory).filter(
+            Inventory.product_id == transfer_data["product_id"],
+            Inventory.branch_id == transfer_data["branch_id"],
+            Inventory.is_active == True
+        ).first()
+        
+        if not inventory or inventory.digital_stock < transfer_data["quantity"]:
+            raise ValueError("Stock digital insuficiente en la sucursal origen")
+        
+        # Create movement with validated state
+        transfer_data["state"] = "validado"
+        movement = self.repository.create(transfer_data)
+        
+        # Update inventory directly (bypass validation flow)
+        from modules.inventory.service import InventoryService
+        inventory_service = InventoryService(self.db)
+        
+        # Deduct from origin
+        inventory_service.adjust_digital_stock(
+            transfer_data["product_id"],
+            transfer_data["branch_id"],
+            -transfer_data["quantity"],
+            is_absolute=False
+        )
+        
+        # Add to destination
+        inventory_service.adjust_digital_stock(
+            transfer_data["product_id"],
+            transfer_data["destination_branch_id"],
+            transfer_data["quantity"],
+            is_absolute=False
+        )
+        
+        # Emit events for real-time sync
+        event_data = {
+            "movement_id": movement.id,
+            "product_id": movement.product_id,
+            "branch_id": movement.branch_id,
+            "destination_branch_id": movement.destination_branch_id,
+            "movement_type": movement.movement_type,
+            "quantity": movement.quantity,
+            "user_id": movement.user_id
+        }
+        
+        # Emit movement validated event
+        event_bus.emit(settings.Events.MOVEMENT_VALIDATED, event_data)
+        
+        # Emit transfer sent event
+        transfer_data_event = {
+            "movement_id": movement.id,
+            "product_id": movement.product_id,
+            "origin_branch_id": movement.branch_id,
+            "destination_branch_id": movement.destination_branch_id,
+            "quantity": movement.quantity
+        }
+        event_bus.emit(settings.Events.TRANSFER_SENT, transfer_data_event)
+        
+        # Emit transfer received event (since it's direct)
+        event_bus.emit(settings.Events.TRANSFER_RECEIVED, transfer_data_event)
+        
+        logger.info(f"Direct transfer executed: Product {movement.product_id}, "
+                   f"From {movement.branch_id} to {movement.destination_branch_id}, "
+                   f"Quantity {movement.quantity}")
+        
+        return movement.to_dict()

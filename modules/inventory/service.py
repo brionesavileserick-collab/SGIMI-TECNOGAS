@@ -208,3 +208,37 @@ class InventoryService:
         result["product"] = details["product"]
         result["branch"] = details["branch"]
         return result
+
+    def get_global_inventory(self, page: int = 1, page_size: int = 20,
+                            product_id: int = None, search: str = None) -> Dict[str, Any]:
+        """
+        Get global inventory (sum of stock across all branches).
+        This is for matrix view to see total stock per product.
+        """
+        skip = (page - 1) * page_size
+        inventory_items = self.repository.get_global_inventory(
+            skip=skip,
+            limit=page_size,
+            product_id=product_id,
+            search=search
+        )
+
+        total = self.repository.count_global_inventory(
+            product_id=product_id,
+            search=search
+        )
+
+        return {
+            "inventory": inventory_items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size
+        }
+
+    def get_product_stock_across_branches(self, product_id: int) -> List[Dict[str, Any]]:
+        """
+        Get stock for a specific product across all branches.
+        Useful for matrix to see product distribution.
+        """
+        return self.repository.get_product_stock_across_branches(product_id)

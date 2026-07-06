@@ -97,6 +97,101 @@ class MovementDialog(QDialog):
         self.setLayout(layout)
         self.on_type_changed(0)
 
+
+class DirectTransferDialog(QDialog):
+    """Dialog for direct transfers between branches (simplified flow)."""
+
+    def __init__(self, db: Session, user_id: int, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.user_id = user_id
+        self.product_service = ProductService(db)
+        self.branch_service = BranchService(db)
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Setup dialog UI."""
+        self.setWindowTitle("Traslado Directo entre Sucursales")
+        self.setMinimumWidth(500)
+
+        layout = QFormLayout()
+
+        # Product
+        self.product_combo = QComboBox()
+        products = self.product_service.get_all_active_products()
+        for p in products:
+            self.product_combo.addItem(f"{p['sku']} - {p['name']}", p['id'])
+        layout.addRow("Producto*:", self.product_combo)
+
+        # Origin branch
+        self.branch_combo = QComboBox()
+        branches = self.branch_service.get_all_active_branches()
+        for b in branches:
+            self.branch_combo.addItem(b['name'], b['id'])
+        self.branch_combo.currentIndexChanged.connect(self.on_origin_changed)
+        layout.addRow("Sucursal Origen*:", self.branch_combo)
+
+        # Destination branch
+        self.dest_branch_combo = QComboBox()
+        for b in branches:
+            self.dest_branch_combo.addItem(b['name'], b['id'])
+        layout.addRow("Sucursal Destino*:", self.dest_branch_combo)
+
+        # Quantity
+        self.quantity_spin = QSpinBox()
+        self.quantity_spin.setRange(1, 999999)
+        self.quantity_spin.setValue(1)
+        layout.addRow("Cantidad*:", self.quantity_spin)
+
+        # Reason
+        self.reason_input = QTextEdit()
+        self.reason_input.setMaximumHeight(80)
+        layout.addRow("Razon:", self.reason_input)
+
+        # Stock preview
+        self.stock_label = QLabel("Stock disponible en origen: -")
+        layout.addRow(self.stock_label)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.save_button = QPushButton("Ejecutar Traslado")
+        self.save_button.clicked.connect(self.accept)
+        self.cancel_button = QPushButton("Cancelar")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.save_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addRow(button_layout)
+
+        self.setLayout(layout)
+        self.on_origin_changed(0)
+
+    def on_origin_changed(self, index: int):
+        """Update stock preview when origin branch changes."""
+        branch_id = self.branch_combo.currentData()
+        product_id = self.product_combo.currentData()
+        
+        if branch_id and product_id:
+            from modules.inventory.service import InventoryService
+            inventory_service = InventoryService(self.db)
+            inventory = inventory_service.get_inventory_by_product_branch(product_id, branch_id)
+            if inventory:
+                self.stock_label.setText(f"Stock disponible en origen: {inventory['digital_stock']}")
+            else:
+                self.stock_label.setText("Stock disponible en origen: 0")
+
+    def get_data(self) -> dict:
+        """Get form data."""
+        return {
+            "movement_type": "transferencia",
+            "product_id": self.product_combo.currentData(),
+            "branch_id": self.branch_combo.currentData(),
+            "destination_branch_id": self.dest_branch_combo.currentData(),
+            "quantity": self.quantity_spin.value(),
+            "reason": self.reason_input.toPlainText().strip(),
+            "notes": "",
+            "user_id": self.user_id
+        }
+
     def on_type_changed(self, index: int):
         """Handle movement type change."""
         movement_type = self.type_combo.currentData()
@@ -120,6 +215,9 @@ class MovementDialog(QDialog):
 
 
 class MovementListView(QWidget):
+    """Movement list view widget."""
+
+    movement_selected = pyqtSignal(int)
     """Movement list view widget."""
 
     movement_selected = pyqtSignal(int)

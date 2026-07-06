@@ -233,3 +233,119 @@ class InventoryRepository:
             "product": product.to_dict(),
             "branch": branch.to_dict()
         }
+
+    def get_global_inventory(self, skip: int = 0, limit: int = 100,
+                             product_id: int = None, search: str = None) -> List[Dict[str, Any]]:
+        """
+        Get global inventory (sum of stock across all branches).
+        Returns aggregated stock per product.
+        """
+        query = self.db.query(
+            Product.id,
+            Product.sku,
+            Product.name,
+            Product.unit_of_measure,
+            Product.unit_price,
+            func.sum(Inventory.physical_stock).label('total_physical_stock'),
+            func.sum(Inventory.digital_stock).label('total_digital_stock'),
+            func.count(Inventory.branch_id).label('branch_count')
+        ).join(
+            Inventory, Product.id == Inventory.product_id
+        ).join(
+            Branch, Inventory.branch_id == Branch.id
+        ).filter(
+            Inventory.is_active == True,
+            Product.is_active == True,
+            Branch.is_active == True
+        ).group_by(
+            Product.id, Product.sku, Product.name, Product.unit_of_measure, Product.unit_price
+        )
+
+        if product_id:
+            query = query.filter(Product.id == product_id)
+
+        if search:
+            query = query.filter(
+                or_(
+                    Product.name.ilike(f"%{search}%"),
+                    Product.sku.ilike(f"%{search}%")
+                )
+            )
+
+        results = query.offset(skip).limit(limit).all()
+
+        return [
+            {
+                "product_id": r.id,
+                "sku": r.sku,
+                "name": r.name,
+                "unit_of_measure": r.unit_of_measure,
+                "unit_price": r.unit_price,
+                "total_physical_stock": r.total_physical_stock or 0,
+                "total_digital_stock": r.total_digital_stock or 0,
+                "branch_count": r.branch_count
+            }
+            for r in results
+        ]
+
+    def count_global_inventory(self, product_id: int = None, search: str = None) -> int:
+        """Count distinct products in global inventory."""
+        query = self.db.query(
+            func.count(func.distinct(Inventory.product_id))
+        ).join(
+            Product, Inventory.product_id == Product.id
+        ).join(
+            Branch, Inventory.branch_id == Branch.id
+        ).filter(
+            Inventory.is_active == True,
+            Product.is_active == True,
+            Branch.is_active == True
+        )
+
+        if product_id:
+            query = query.filter(Product.id == product_id)
+
+        if search:
+            query = query.filter(
+                or_(
+                    Product.name.ilike(f"%{search}%"),
+                    Product.sku.ilike(f"%{search}%")
+                )
+            )
+
+        return query.scalar() or 0
+
+    def get_product_stock_across_branches(self, product_id: int) -> List[Dict[str, Any]]:
+        """
+        Get stock for a specific product across all branches.
+        Useful for matrix to see product distribution.
+        """
+        results = self.db.query(
+            Inventory,
+            Branch.name,
+            Branch.address
+        ).join(
+            Branch, Inventory.branch_id == Branch.id
+        ).join(
+            Product, Inventory.product_id == Product.id
+        ).filter(
+            Inventory.product_id == product_id,
+            Inventory.is_active == True,
+            Product.is_active == True,
+            Branch.is_active == True
+        ).all()
+
+        return [
+            {
+                "inventory_id": inv.id,
+                "branch_id": inv.branch_id,
+                "branch_name": branch_name,
+                "branch_address": branch_address,
+                "physical_stock": inv.physical_stock,
+                "digital_stock": inv.digital_stock,
+                "difference": inv.difference,
+                "has_discrepancy": inv.has_discrepancy,
+                "is_low_stock": inv.is_low_stock
+            }
+            for inv, branch_name, branch_address in results
+        ]

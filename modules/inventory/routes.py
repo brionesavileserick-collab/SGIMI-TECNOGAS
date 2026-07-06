@@ -151,6 +151,15 @@ class InventoryListView(QWidget):
         self.count_button.clicked.connect(self.on_count_inventory)
         filter_layout.addWidget(self.count_button)
 
+        self.global_view_btn = QPushButton("Inventario Global")
+        self.global_view_btn.setCheckable(True)
+        self.global_view_btn.clicked.connect(self.toggle_global_view)
+        filter_layout.addWidget(self.global_view_btn)
+
+        self.product_distribution_btn = QPushButton("Distribucion por Producto")
+        self.product_distribution_btn.clicked.connect(self.show_product_distribution)
+        filter_layout.addWidget(self.product_distribution_btn)
+
         filter_layout.addStretch()
 
         layout.addLayout(filter_layout)
@@ -323,3 +332,141 @@ class InventoryListView(QWidget):
                 self.load_inventory(self.search_input.text() or None)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Error al actualizar conteo: {str(e)}")
+
+    def toggle_global_view(self, checked: bool):
+        """Toggle global inventory view (matrix only)."""
+        if checked:
+            self.load_global_inventory()
+        else:
+            self.load_inventory(self.search_input.text() or None)
+
+    def load_global_inventory(self, search: str = None):
+        """Load global inventory (sum across all branches)."""
+        result = self.service.get_global_inventory(
+            page=1,
+            page_size=100,
+            search=search
+        )
+
+        items = result["inventory"]
+        self.table.setRowCount(len(items))
+
+        for row, item in enumerate(items):
+            # ID (hidden)
+            self.table.setItem(row, 0, QTableWidgetItem(str(item["product_id"])))
+
+            # Branch (not applicable for global view)
+            self.table.setItem(row, 1, QTableWidgetItem("Todas"))
+
+            # Product
+            sku = item.get("sku", "")
+            name = item.get("name", "")
+            self.table.setItem(row, 2, QTableWidgetItem(f"{sku} - {name}"))
+
+            # Physical stock (total)
+            self.table.setItem(row, 3, QTableWidgetItem(str(item["total_physical_stock"])))
+
+            # Digital stock (total)
+            self.table.setItem(row, 4, QTableWidgetItem(str(item["total_digital_stock"])))
+
+            # Difference
+            diff = item["total_physical_stock"] - item["total_digital_stock"]
+            diff_item = QTableWidgetItem(str(diff))
+            if diff != 0:
+                diff_item.setBackground(Qt.GlobalColor.yellow if diff > 0 else Qt.GlobalColor.red)
+            self.table.setItem(row, 5, diff_item)
+
+            # Min stock (not applicable for global view)
+            self.table.setItem(row, 6, QTableWidgetItem("-"))
+
+            # Status
+            status = "Global"
+            self.table.setItem(row, 7, QTableWidgetItem(status))
+
+            # Actions
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(5, 5, 5, 5)
+
+            view_dist_btn = QPushButton("Ver Distribucion")
+            view_dist_btn.clicked.connect(lambda checked, pid=item["product_id"]: self.show_product_distribution_for_product(pid))
+            actions_layout.addWidget(view_dist_btn)
+
+            self.table.setCellWidget(row, 8, actions_widget)
+
+        self.table.resizeColumnsToContents()
+
+    def show_product_distribution(self):
+        """Show dialog to select product and view its distribution across branches."""
+        from PyQt6.QtWidgets import QDialog, QFormLayout, QComboBox, QDialogButtonBox
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Seleccionar Producto")
+        layout = QFormLayout()
+
+        product_combo = QComboBox()
+        products = self.product_service.get_all_active_products()
+        for product in products:
+            product_combo.addItem(f"{product['sku']} - {product['name']}", product['id'])
+        layout.addRow("Producto:", product_combo)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+
+        dialog.setLayout(layout)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            product_id = product_combo.currentData()
+            self.show_product_distribution_for_product(product_id)
+
+    def show_product_distribution_for_product(self, product_id: int):
+        """Show distribution of a product across all branches."""
+        distribution = self.service.get_product_stock_across_branches(product_id)
+
+        if not distribution:
+            QMessageBox.information(self, "Informacion", "No hay stock de este producto en ninguna sucursal")
+            return
+
+        # Create dialog to show distribution
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Distribucion por Sucursal")
+        dialog.setMinimumWidth(600)
+
+        layout = QVBoxLayout()
+
+        table = QTableWidget()
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels([
+            "Sucursal", "Stock Fisico", "Stock Digital", "Diferencia", "Estado"
+        ])
+        table.setRowCount(len(distribution))
+
+        for row, item in enumerate(distribution):
+            table.setItem(row, 0, QTableWidgetItem(item["branch_name"]))
+            table.setItem(row, 1, QTableWidgetItem(str(item["physical_stock"])))
+            table.setItem(row, 2, QTableWidgetItem(str(item["digital_stock"])))
+            
+            diff = item["difference"]
+            diff_item = QTableWidgetItem(str(diff))
+            if diff != 0:
+                diff_item.setBackground(Qt.GlobalColor.yellow if diff > 0 else Qt.GlobalColor.red)
+            table.setItem(row, 3, diff_item)
+
+            status = "OK"
+            if item["has_discrepancy"]:
+                status = "Discrepancia"
+            elif item["is_low_stock"]:
+                status = "Stock Bajo"
+            table.setItem(row, 4, QTableWidgetItem(status))
+
+        table.resizeColumnsToContents()
+        layout.addWidget(table)
+
+        close_btn = QPushButton("Cerrar")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+
+        dialog.setLayout(layout)
+        dialog.exec()
