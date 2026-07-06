@@ -1,0 +1,28 @@
+# Core dependencies
+sqlalchemy==2.0.23
+pydantic==2.5.2
+
+# GUI Framework
+PyQt6==6.6.1
+
+# Database drivers
+# SQLite is built-in to Python
+
+# Utilities
+python-dateutil==2.8.2
+
+# Build tools for executable creation
+pyinstaller==6.3.0
+
+# Type hints and development
+typing-extensions==4.8.0
+
+# Testing
+pytest==7.4.3
+pytest-qt==4.2.0
+
+# Logging
+colorlog==6.8.0
+
+# Configuration
+python-dotenv==1.0.0
