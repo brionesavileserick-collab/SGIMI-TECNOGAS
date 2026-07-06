@@ -5,6 +5,8 @@ Branch service layer - Business logic.
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from modules.branches.repository import BranchRepository
+from core.event_bus import event_bus
+from core.settings import settings
 from utils.validators import validate_name
 import logging
 
@@ -28,6 +30,14 @@ class BranchService:
 
         # Create branch
         branch = self.repository.create(branch_data)
+        
+        # Emit event
+        event_data = {
+            "branch_id": branch.id,
+            "name": branch.name
+        }
+        event_bus.emit(settings.Events.BRANCH_CREATED, event_data)
+        
         logger.info(f"Branch created: {branch.name}")
         return branch.to_dict()
 
@@ -69,6 +79,14 @@ class BranchService:
         if not branch:
             return None
 
+        # Emit event
+        event_data = {
+            "branch_id": branch.id,
+            "name": branch.name,
+            "changes": update_data
+        }
+        event_bus.emit(settings.Events.BRANCH_UPDATED, event_data)
+
         logger.info(f"Branch updated: {branch.name}")
         return branch.to_dict()
 
@@ -80,6 +98,13 @@ class BranchService:
 
         success = self.repository.delete(branch_id)
         if success:
+            # Emit event
+            event_data = {
+                "branch_id": branch_id,
+                "name": branch.name
+            }
+            event_bus.emit(settings.Events.BRANCH_DELETED, event_data)
+            
             logger.info(f"Branch deleted: {branch.name}")
 
         return success

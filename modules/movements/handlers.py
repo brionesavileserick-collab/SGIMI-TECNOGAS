@@ -49,15 +49,9 @@ class MovementHandlers:
     def handle_transfer_sent(self, data: Dict[str, Any]):
         """Handle transfer.sent event."""
         logger.info(f"Transfer sent event: {data}")
-        # In this inventory workflow, validation confirms the transfer operation
-        # and applies origin/destination stock updates through events.
-        transfer_data = {
-            "movement_id": data.get("movement_id"),
-            "product_id": data.get("product_id"),
-            "destination_branch_id": data.get("destination_branch_id"),
-            "quantity": data.get("quantity")
-        }
-        event_bus.emit(settings.Events.TRANSFER_RECEIVED, transfer_data)
+        # Transfer.received should be emitted by the destination branch
+        # when they confirm receipt, not automatically here.
+        # This handler only logs the event for audit purposes.
 
     def unregister_handlers(self):
         """Unregister all event handlers."""

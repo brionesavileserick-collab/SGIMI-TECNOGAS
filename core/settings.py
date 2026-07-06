@@ -66,6 +66,11 @@ class Settings:
         PRODUCT_UPDATED = "product.updated"
         PRODUCT_DELETED = "product.deleted"
 
+        # Branch events
+        BRANCH_CREATED = "branch.created"
+        BRANCH_UPDATED = "branch.updated"
+        BRANCH_DELETED = "branch.deleted"
+
         # Movement events
         MOVEMENT_CREATED = "movement.created"
         MOVEMENT_VALIDATED = "movement.validated"

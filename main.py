@@ -445,11 +445,11 @@ class MainWindow(QMainWindow):
     def setup_handlers(self):
         """Setup all event handlers."""
         # Initialize handlers from each module
+        # Note: Dashboard handlers are now managed by the dashboard widget itself
         self.handlers.append(setup_inventory_handlers(self.db))
         self.handlers.append(setup_movement_handlers(self.db))
         self.handlers.append(setup_alert_handlers(self.db))
         self.handlers.append(setup_history_handlers(self.db))
-        self.handlers.append(setup_dashboard_handlers(self.db))
 
         logger.info("All event handlers registered")
 

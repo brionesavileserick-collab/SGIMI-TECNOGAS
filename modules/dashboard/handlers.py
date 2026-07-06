@@ -2,7 +2,7 @@
 Dashboard event handlers - React to events and update dashboard.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Callable
 from sqlalchemy.orm import Session
 from core.event_bus import event_bus
 from core.settings import settings
@@ -16,8 +16,13 @@ class DashboardHandlers:
 
     def __init__(self, db: Session):
         self.db = db
+        self._refresh_callback: Callable = None
         self._register_handlers()
         logger.info("Dashboard handlers registered")
+
+    def set_refresh_callback(self, callback: Callable):
+        """Set the callback function to refresh dashboard UI."""
+        self._refresh_callback = callback
 
     def _register_handlers(self):
         """Register all event handlers."""
@@ -28,17 +33,25 @@ class DashboardHandlers:
     def handle_movement_change(self, data: Dict[str, Any]):
         """Handle movement-related events."""
         logger.info(f"Movement change detected in dashboard: {data}")
-        # Dashboard metrics would be recalculated on next refresh
+        self._trigger_refresh()
 
     def handle_inventory_change(self, data: Dict[str, Any]):
         """Handle inventory-related events."""
         logger.info(f"Inventory change detected in dashboard: {data}")
-        # Dashboard metrics would be recalculated on next refresh
+        self._trigger_refresh()
 
     def handle_alert(self, data: Dict[str, Any]):
         """Handle alert events."""
         logger.info(f"Alert received in dashboard: {data}")
-        # Could display alert notifications or update alert count
+        self._trigger_refresh()
+
+    def _trigger_refresh(self):
+        """Trigger dashboard refresh if callback is set."""
+        if self._refresh_callback:
+            try:
+                self._refresh_callback()
+            except Exception as e:
+                logger.error(f"Error triggering dashboard refresh: {e}")
 
     def unregister_handlers(self):
         """Unregister all event handlers."""

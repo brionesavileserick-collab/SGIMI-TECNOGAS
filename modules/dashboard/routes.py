@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from modules.dashboard.service import DashboardService
 from modules.branches.service import BranchService
+from modules.dashboard.handlers import setup_dashboard_handlers
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,9 +25,13 @@ class DashboardWidget(QWidget):
         self.db = db
         self.service = DashboardService(db)
         self.branch_service = BranchService(db)
+        self.handlers = None
         self.setup_ui()
+        # Setup event handlers for reactive updates
+        self.handlers = setup_dashboard_handlers(self.db)
+        self.handlers.set_refresh_callback(self.load_data)
         self.load_data()
-        # Auto-refresh every 30 seconds
+        # Auto-refresh every 30 seconds as fallback
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.load_data)
         self.refresh_timer.start(30000)
@@ -297,3 +302,5 @@ class DashboardWidget(QWidget):
     def cleanup(self):
         """Cleanup before destroying widget."""
         self.refresh_timer.stop()
+        if self.handlers:
+            self.handlers.unregister_handlers()

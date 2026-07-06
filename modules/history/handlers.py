@@ -28,6 +28,11 @@ class HistoryHandlers:
         event_bus.subscribe(settings.Events.PRODUCT_UPDATED, self.handle_product_updated)
         event_bus.subscribe(settings.Events.PRODUCT_DELETED, self.handle_product_deleted)
 
+        # Branch events
+        event_bus.subscribe(settings.Events.BRANCH_CREATED, self.handle_branch_created)
+        event_bus.subscribe(settings.Events.BRANCH_UPDATED, self.handle_branch_updated)
+        event_bus.subscribe(settings.Events.BRANCH_DELETED, self.handle_branch_deleted)
+
         # Movement events
         event_bus.subscribe(settings.Events.MOVEMENT_CREATED, self.handle_movement_created)
         event_bus.subscribe(settings.Events.MOVEMENT_VALIDATED, self.handle_movement_validated)
@@ -71,6 +76,36 @@ class HistoryHandlers:
             entity_type="product",
             entity_id=data.get("product_id"),
             action="Producto eliminado",
+            details=data
+        )
+
+    def handle_branch_created(self, data: Dict[str, Any]):
+        """Record branch creation in history."""
+        self.service.record_event(
+            event_type=settings.Events.BRANCH_CREATED,
+            entity_type="branch",
+            entity_id=data.get("branch_id"),
+            action="Sucursal creada",
+            details=data
+        )
+
+    def handle_branch_updated(self, data: Dict[str, Any]):
+        """Record branch update in history."""
+        self.service.record_event(
+            event_type=settings.Events.BRANCH_UPDATED,
+            entity_type="branch",
+            entity_id=data.get("branch_id"),
+            action="Sucursal actualizada",
+            details=data
+        )
+
+    def handle_branch_deleted(self, data: Dict[str, Any]):
+        """Record branch deletion in history."""
+        self.service.record_event(
+            event_type=settings.Events.BRANCH_DELETED,
+            entity_type="branch",
+            entity_id=data.get("branch_id"),
+            action="Sucursal eliminada",
             details=data
         )
 
@@ -162,6 +197,10 @@ class HistoryHandlers:
         event_bus.unsubscribe(settings.Events.PRODUCT_CREATED, self.handle_product_created)
         event_bus.unsubscribe(settings.Events.PRODUCT_UPDATED, self.handle_product_updated)
         event_bus.unsubscribe(settings.Events.PRODUCT_DELETED, self.handle_product_deleted)
+
+        event_bus.unsubscribe(settings.Events.BRANCH_CREATED, self.handle_branch_created)
+        event_bus.unsubscribe(settings.Events.BRANCH_UPDATED, self.handle_branch_updated)
+        event_bus.unsubscribe(settings.Events.BRANCH_DELETED, self.handle_branch_deleted)
 
         event_bus.unsubscribe(settings.Events.MOVEMENT_CREATED, self.handle_movement_created)
         event_bus.unsubscribe(settings.Events.MOVEMENT_VALIDATED, self.handle_movement_validated)
