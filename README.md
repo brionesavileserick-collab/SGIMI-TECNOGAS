@@ -45,9 +45,8 @@ python main.py
 2. Descomprimir el archivo
 3. Ejecutar `SGIMI_TECNOGAS.exe` (Windows) o `SGIMI_TECNOGAS` (Linux/Mac)
 
-### Credenciales por Defecto
-- **Usuario**: admin@tecnogas.com
-- **Contrasena**: admin123
+### Primer Uso
+Al abrir la aplicacion por primera vez, el sistema solicita crear el usuario inicial. No se instalan datos de prueba ni credenciales por defecto.
 
 ### Estructura del Proyecto
 ```

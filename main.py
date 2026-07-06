@@ -20,6 +20,8 @@ from PyQt6.QtGui import QAction, QIcon, QFont
 from config import setup_logging, APP_TITLE, APP_VERSION
 from core.database import init_db, SessionLocal
 from core.event_bus import event_bus
+from core.settings import settings
+from utils.validators import validate_email, validate_name, validate_password
 
 # Module handlers
 from modules.inventory.handlers import setup_inventory_handlers
@@ -114,12 +116,6 @@ class LoginDialog(QDialog):
 
         layout.addLayout(button_layout)
 
-        # Demo credentials hint
-        hint = QLabel("Demo: admin@tecnogas.com / admin123")
-        hint.setStyleSheet("color: gray; font-size: 10px;")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(hint)
-
         self.setLayout(layout)
 
     def attempt_login(self):
@@ -143,6 +139,98 @@ class LoginDialog(QDialog):
             self.accept()
         else:
             QMessageBox.warning(self, "Error", "Credenciales incorrectas")
+
+
+class FirstRunDialog(QDialog):
+    """Dialog for creating the initial system user."""
+
+    def __init__(self, db, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.created_user = None
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Setup first-run dialog UI."""
+        self.setWindowTitle("SGIMI TECNOGAS - Configuracion Inicial")
+        self.setFixedWidth(440)
+        self.setFixedHeight(330)
+
+        layout = QVBoxLayout()
+
+        title = QLabel("Crear usuario inicial")
+        title.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        subtitle = QLabel("No hay usuarios registrados. Cree el primer usuario para comenzar a operar.")
+        subtitle.setWordWrap(True)
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(subtitle)
+
+        form_layout = QFormLayout()
+
+        self.name_input = QLineEdit()
+        form_layout.addRow("Nombre:", self.name_input)
+
+        self.email_input = QLineEdit()
+        form_layout.addRow("Correo:", self.email_input)
+
+        self.password_input = QLineEdit()
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        form_layout.addRow("Contrasena:", self.password_input)
+
+        self.confirm_password_input = QLineEdit()
+        self.confirm_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.confirm_password_input.returnPressed.connect(self.create_initial_user)
+        form_layout.addRow("Confirmar:", self.confirm_password_input)
+
+        layout.addLayout(form_layout)
+
+        self.create_button = QPushButton("Crear usuario")
+        self.create_button.clicked.connect(self.create_initial_user)
+        layout.addWidget(self.create_button)
+
+        self.setLayout(layout)
+
+    def create_initial_user(self):
+        """Create the first real user for the system."""
+        name = self.name_input.text().strip()
+        email = self.email_input.text().strip().lower()
+        password = self.password_input.text()
+        confirm_password = self.confirm_password_input.text()
+
+        validations = [
+            validate_name(name, "Nombre"),
+            validate_email(email),
+            validate_password(password, settings.PASSWORD_MIN_LENGTH),
+        ]
+        for is_valid, error in validations:
+            if not is_valid:
+                QMessageBox.warning(self, "Error", error)
+                return
+
+        if password != confirm_password:
+            QMessageBox.warning(self, "Error", "Las contrasenas no coinciden")
+            return
+
+        if self.db.query(User).filter(User.email == email).first():
+            QMessageBox.warning(self, "Error", "Ya existe un usuario con ese correo")
+            return
+
+        try:
+            user = User(name=name, email=email)
+            user.set_password(password)
+            self.db.add(user)
+            self.db.commit()
+            self.db.refresh(user)
+            self.created_user = user
+            QMessageBox.information(self, "Exito", "Usuario inicial creado exitosamente")
+            self.accept()
+        except Exception as e:
+            self.db.rollback()
+            logger.exception(f"Error creating initial user: {e}")
+            QMessageBox.critical(self, "Error", f"No se pudo crear el usuario inicial: {str(e)}")
 
 
 class MainWindow(QMainWindow):
@@ -441,24 +529,20 @@ def run_application():
     init_db()
     logger.info("Database initialized")
 
-    # Seed database if empty
-    from database.seed import seed_database
     db = SessionLocal()
     try:
         if db.query(User).count() == 0:
-            logger.info("Seeding database...")
-            seed_database(db, force=False)
-    finally:
-        db.close()
+            setup_dialog = FirstRunDialog(db)
+            if setup_dialog.exec() != QDialog.DialogCode.Accepted:
+                logger.info("Initial setup cancelled, exiting...")
+                db.close()
+                sys.exit(0)
 
-    # Create database session for login
-    db = SessionLocal()
-
-    try:
         # Show login dialog
         login_dialog = LoginDialog(db)
         if login_dialog.exec() != QDialog.DialogCode.Accepted:
             logger.info("Login cancelled, exiting...")
+            db.close()
             sys.exit(0)
 
         user = login_dialog.authenticated_user

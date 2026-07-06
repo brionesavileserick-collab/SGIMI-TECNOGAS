@@ -41,6 +41,6 @@ mkdir -p logs
 # Run application
 echo ""
 echo "Starting SGIMI TECNOGAS..."
-echo "Default credentials: admin@tecnogas.com / admin123"
+echo "On first use, the application will ask you to create the initial user."
 echo ""
 python main.py

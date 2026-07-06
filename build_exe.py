@@ -145,8 +145,7 @@ def create_distribution_package():
 2. Ejecute SGIMI_TECNOGAS.exe (Windows) o SGIMI_TECNOGAS (Linux/Mac)
 
 ### Primer Uso
-- Usuario por defecto: admin@tecnogas.com
-- Contrasena: admin123
+Al abrir la aplicacion por primera vez, cree el usuario inicial con datos reales.
 
 ### Soporte
 Para soporte tecnico, contacte a soporte@tecnogas.com
