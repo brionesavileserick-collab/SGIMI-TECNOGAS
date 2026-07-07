@@ -43,7 +43,7 @@ from modules.branches.routes import BranchListView
 from modules.inventory.routes import InventoryListView
 from modules.movements.routes import MovementListView
 from modules.alerts.routes import AlertListView
-from modules.history.routes import HistoryListView
+from modules.history.routes import HistoryView
 from modules.reports.routes import ReportsView
 from modules.user.routes import UserListView
 
@@ -561,7 +561,7 @@ class MainWindow(QMainWindow):
         self.content_stack.addWidget(self.alerts_view)
 
         # History
-        self.history_view = HistoryListView(self.db)
+        self.history_view = HistoryView(self.db)
         self.content_stack.addWidget(self.history_view)
 
         # Reports

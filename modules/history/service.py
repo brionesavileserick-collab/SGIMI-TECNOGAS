@@ -1,42 +1,66 @@
 """
 History service layer - Records all events for traceability.
+
+Expansions implemented here:
+  1 - Filtro por sucursal (branch_id in list_history)
+  2 - Detalle expandido (get_entry_details)
+  3 - Nombres en vez de IDs (enrich_entry, get_user_name, get_entity_name)
+  4 - Diff de cambios (get_change_summary)
+  5 - Búsqueda avanzada en details (search_in_details)
+  6 - Historial de movimientos por producto (get_product_movement_history)
+  7 - Respaldo / archivado (archive_history, get_archived_history)
+  8 - Integridad referencial (sanitize_entry, cleanup_orphaned_references)
+  9 - Logs del sistema (record_system_event, record_login, record_logout,
+                        record_error, record_config_change)
 """
 
-from typing import List, Dict, Any, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import Column, Integer, String, DateTime, Text, JSON
-from sqlalchemy.sql import func
-from core.database import Base
-from datetime import datetime
+from __future__ import annotations
+
 import json
 import logging
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean
+from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
+
+from core.database import Base
 
 logger = logging.getLogger(__name__)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ORM Models
+# ══════════════════════════════════════════════════════════════════════════════
+
 class HistoryEntry(Base):
-    """History model for storing event records."""
+    """Registro principal del historial de eventos del sistema."""
 
     __tablename__ = "history"
 
     id = Column(Integer, primary_key=True, index=True)
     event_type = Column(String(100), nullable=False, index=True)
-    entity_type = Column(String(50), nullable=True)  # product, movement, inventory, alert
+    entity_type = Column(String(50), nullable=True)  # product | movement | inventory | branch | alert | system
     entity_id = Column(Integer, nullable=True)
     user_id = Column(Integer, nullable=True)
     action = Column(String(100), nullable=False)
-    details = Column(Text, nullable=True)  # JSON string with full event data
+    details = Column(Text, nullable=True)            # JSON string con payload completo
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
-    def to_dict(self):
-        """Convert history entry to dictionary."""
-        details = None
-        if self.details:
-            try:
-                details = json.loads(self.details)
-            except:
-                details = self.details
+    # ── helpers ──────────────────────────────────────────────────────────────
 
+    def _parsed_details(self) -> Optional[Dict[str, Any]]:
+        """Parse details JSON; returns dict or None on failure."""
+        if not self.details:
+            return None
+        try:
+            return json.loads(self.details)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert history entry to dictionary."""
         return {
             "id": self.id,
             "event_type": self.event_type,
@@ -44,20 +68,84 @@ class HistoryEntry(Base):
             "entity_id": self.entity_id,
             "user_id": self.user_id,
             "action": self.action,
-            "details": details,
-            "created_at": self.created_at.isoformat() if self.created_at else None
+            "details": self._parsed_details(),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
+
+class ArchiveHistory(Base):
+    """
+    Expansión 7 - Tabla de archivo.
+    Misma estructura que history; se rellena antes de la limpieza de registros antiguos.
+    """
+
+    __tablename__ = "archive_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    original_id = Column(Integer, nullable=False, index=True)   # id en history original
+    event_type = Column(String(100), nullable=False, index=True)
+    entity_type = Column(String(50), nullable=True)
+    entity_id = Column(Integer, nullable=True)
+    user_id = Column(Integer, nullable=True)
+    action = Column(String(100), nullable=False)
+    details = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=True)
+    archived_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    def to_dict(self) -> Dict[str, Any]:
+        details = None
+        if self.details:
+            try:
+                details = json.loads(self.details)
+            except (json.JSONDecodeError, TypeError):
+                details = self.details
+        return {
+            "id": self.id,
+            "original_id": self.original_id,
+            "event_type": self.event_type,
+            "entity_type": self.entity_type,
+            "entity_id": self.entity_id,
+            "user_id": self.user_id,
+            "action": self.action,
+            "details": details,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "archived_at": self.archived_at.isoformat() if self.archived_at else None,
+        }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Service
+# ══════════════════════════════════════════════════════════════════════════════
 
 class HistoryService:
     """Service for history/audit trail management."""
 
+    # Tipos de entidad reconocidos para resolución de nombres
+    _ENTITY_TABLES = {
+        "product":   ("products",  "name"),
+        "branch":    ("branches",  "name"),
+        "user":      ("users",     "name"),
+        "movement":  ("movements", "id"),   # los movimientos no tienen nombre propio
+        "inventory": ("inventory", "id"),
+        "alert":     ("alerts",    "title"),
+    }
+
     def __init__(self, db: Session):
         self.db = db
 
-    def record_event(self, event_type: str, entity_type: str = None,
-                     entity_id: int = None, user_id: int = None,
-                     action: str = None, details: Dict[str, Any] = None) -> Dict[str, Any]:
+    # ─────────────────────────────────────────────────────────────────────────
+    # Escritura
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def record_event(
+        self,
+        event_type: str,
+        entity_type: str = None,
+        entity_id: int = None,
+        user_id: int = None,
+        action: str = None,
+        details: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
         """Record an event in history."""
         entry = HistoryEntry(
             event_type=event_type,
@@ -65,29 +153,245 @@ class HistoryService:
             entity_id=entity_id,
             user_id=user_id,
             action=action or event_type,
-            details=json.dumps(details) if details else None
+            details=json.dumps(details) if details else None,
         )
-
         self.db.add(entry)
         self.db.commit()
         self.db.refresh(entry)
-
         logger.info(f"History recorded: {event_type}")
         return entry.to_dict()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 9 – Logs del sistema
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def record_system_event(
+        self,
+        event_type: str,
+        action: str,
+        details: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Record a system-level event (no entity_type / entity_id).
+
+        event_type examples: "session_start", "session_end", "error",
+                             "config_change", "backup", "login", "logout"
+        """
+        return self.record_event(
+            event_type=event_type,
+            entity_type="system",
+            entity_id=None,
+            user_id=None,
+            action=action,
+            details=details,
+        )
+
+    def record_login(self, user_id: int, user_name: str = None) -> Dict[str, Any]:
+        """Record a user login event."""
+        return self.record_event(
+            event_type="session.login",
+            entity_type="system",
+            entity_id=None,
+            user_id=user_id,
+            action=f"Inicio de sesión: {user_name or user_id}",
+            details={"user_id": user_id, "user_name": user_name},
+        )
+
+    def record_logout(self, user_id: int, user_name: str = None) -> Dict[str, Any]:
+        """Record a user logout event."""
+        return self.record_event(
+            event_type="session.logout",
+            entity_type="system",
+            entity_id=None,
+            user_id=user_id,
+            action=f"Cierre de sesión: {user_name or user_id}",
+            details={"user_id": user_id, "user_name": user_name},
+        )
+
+    def record_error(self, error_message: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Record an application error."""
+        details = {"error": error_message}
+        if context:
+            details.update(context)
+        return self.record_system_event(
+            event_type="system.error",
+            action=f"Error del sistema: {error_message[:80]}",
+            details=details,
+        )
+
+    def record_config_change(
+        self, setting_name: str, old_value: Any, new_value: Any, user_id: int = None
+    ) -> Dict[str, Any]:
+        """Record a configuration change."""
+        entry = self.record_event(
+            event_type="system.config_change",
+            entity_type="system",
+            entity_id=None,
+            user_id=user_id,
+            action=f"Configuración modificada: {setting_name}",
+            details={
+                "setting": setting_name,
+                "changes": {setting_name: {"before": old_value, "after": new_value}},
+            },
+        )
+        return entry
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Lectura individual
+    # ─────────────────────────────────────────────────────────────────────────
 
     def get_entry(self, entry_id: int) -> Optional[Dict[str, Any]]:
         """Get history entry by ID."""
         entry = self.db.query(HistoryEntry).filter(HistoryEntry.id == entry_id).first()
         return entry.to_dict() if entry else None
 
-    def list_history(self, skip: int = 0, limit: int = 100,
-                     event_type: str = None,
-                     entity_type: str = None,
-                     entity_id: int = None,
-                     user_id: int = None,
-                     date_from: datetime = None,
-                     date_to: datetime = None) -> Dict[str, Any]:
-        """List history entries with filtering."""
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 2 – Detalle expandido
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_entry_details(self, entry_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Return a single history entry with its details JSON parsed and
+        the change summary pre-computed.
+        """
+        entry = self.db.query(HistoryEntry).filter(HistoryEntry.id == entry_id).first()
+        if not entry:
+            return None
+
+        result = entry.to_dict()
+        result["change_summary"] = self.get_change_summary(result)
+        return result
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 4 – Diff de cambios
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_change_summary(self, entry: Dict[str, Any]) -> List[Dict[str, str]]:
+        """
+        Extract the "before / after" diff from an entry's details.
+
+        Expects details to contain a "changes" key structured as:
+            { "field_name": {"before": old_val, "after": new_val} }
+        or the flat format some services use:
+            { "changes": { "field": value_after } }  ← shows only new value
+
+        Returns a list of dicts: [{"campo": ..., "antes": ..., "despues": ...}]
+        If no diff data is available, returns an empty list.
+        """
+        details = entry.get("details") if isinstance(entry, dict) else None
+        if not details or not isinstance(details, dict):
+            return []
+
+        raw_changes = details.get("changes")
+        if not raw_changes or not isinstance(raw_changes, dict):
+            return []
+
+        rows: List[Dict[str, str]] = []
+        for field, value in raw_changes.items():
+            if isinstance(value, dict) and ("before" in value or "after" in value):
+                rows.append({
+                    "campo": field,
+                    "antes": str(value.get("before", "—")),
+                    "despues": str(value.get("after", "—")),
+                })
+            else:
+                # Flat format: only the new value is known
+                rows.append({
+                    "campo": field,
+                    "antes": "—",
+                    "despues": str(value),
+                })
+        return rows
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 3 – Nombres en vez de IDs
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_user_name(self, user_id: int) -> str:
+        """Resolve a user_id to a human-readable name."""
+        if not user_id:
+            return "—"
+        try:
+            from models.user import User
+            user = self.db.query(User).filter(User.id == user_id).first()
+            if user:
+                return user.name
+        except Exception as exc:
+            logger.debug(f"get_user_name({user_id}): {exc}")
+        return f"Usuario #{user_id}"
+
+    def get_entity_name(self, entity_type: str, entity_id: int) -> str:
+        """
+        Resolve (entity_type, entity_id) to a human-readable name.
+        Falls back gracefully if the entity no longer exists.
+        """
+        if not entity_type or not entity_id:
+            return "—"
+        if entity_type == "system":
+            return "Sistema"
+        try:
+            from sqlalchemy import text
+            table_info = self._ENTITY_TABLES.get(entity_type)
+            if not table_info:
+                return f"{entity_type} #{entity_id}"
+            table, name_col = table_info
+            if name_col == "id":
+                return f"{entity_type.capitalize()} #{entity_id}"
+            row = self.db.execute(
+                text(f"SELECT {name_col} FROM {table} WHERE id = :eid"),
+                {"eid": entity_id},
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0])
+            return f"{entity_type.capitalize()} #{entity_id} (eliminado)"
+        except Exception as exc:
+            logger.debug(f"get_entity_name({entity_type}, {entity_id}): {exc}")
+            return f"{entity_type} #{entity_id}"
+
+    def enrich_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Augment a history entry dict with resolved human-readable names:
+          - user_name  (from user_id)
+          - entity_name (from entity_type + entity_id)
+
+        The original entry dict is NOT mutated; a new dict is returned.
+        """
+        enriched = dict(entry)
+        enriched["user_name"] = self.get_user_name(entry.get("user_id"))
+        enriched["entity_name"] = self.get_entity_name(
+            entry.get("entity_type"), entry.get("entity_id")
+        )
+        return enriched
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 1 – Filtro por sucursal  +  Listado principal
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def list_history(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        event_type: str = None,
+        entity_type: str = None,
+        entity_id: int = None,
+        user_id: int = None,
+        branch_id: int = None,          # Expansión 1
+        date_from: datetime = None,
+        date_to: datetime = None,
+        enrich: bool = False,           # Expansión 3
+    ) -> Dict[str, Any]:
+        """
+        List history entries with filtering.
+
+        branch_id (Expansión 1):
+            Filtra entradas donde el campo details JSON contenga
+            "branch_id": <branch_id>.  Aplica OR sobre los campos
+            branch_id y destination_branch_id para capturar
+            transferencias.
+
+        enrich (Expansión 3):
+            Si True, cada entrada lleva user_name y entity_name resueltos.
+        """
         query = self.db.query(HistoryEntry)
 
         if event_type:
@@ -108,50 +412,294 @@ class HistoryService:
         if date_to:
             query = query.filter(HistoryEntry.created_at <= date_to)
 
+        # Expansión 1 – filtro por sucursal sobre el campo JSON details
+        if branch_id is not None:
+            branch_pattern = f'%"branch_id": {branch_id}%'
+            dest_pattern = f'%"destination_branch_id": {branch_id}%'
+            from sqlalchemy import or_
+            query = query.filter(
+                or_(
+                    HistoryEntry.details.ilike(branch_pattern),
+                    HistoryEntry.details.ilike(dest_pattern),
+                )
+            )
+
         total = query.count()
-        entries = query.order_by(HistoryEntry.created_at.desc()).offset(skip).limit(limit).all()
+        entries_orm = (
+            query.order_by(HistoryEntry.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+        entries = [e.to_dict() for e in entries_orm]
+        if enrich:
+            entries = [self.enrich_entry(e) for e in entries]
 
         return {
-            "entries": [e.to_dict() for e in entries],
+            "entries": entries,
             "total": total,
             "skip": skip,
-            "limit": limit
+            "limit": limit,
         }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Búsquedas
+    # ─────────────────────────────────────────────────────────────────────────
 
     def get_entity_history(self, entity_type: str, entity_id: int) -> List[Dict[str, Any]]:
         """Get complete history for an entity."""
-        entries = self.db.query(HistoryEntry).filter(
-            HistoryEntry.entity_type == entity_type,
-            HistoryEntry.entity_id == entity_id
-        ).order_by(HistoryEntry.created_at.desc()).all()
-
+        entries = (
+            self.db.query(HistoryEntry)
+            .filter(
+                HistoryEntry.entity_type == entity_type,
+                HistoryEntry.entity_id == entity_id,
+            )
+            .order_by(HistoryEntry.created_at.desc())
+            .all()
+        )
         return [e.to_dict() for e in entries]
 
-    def search_history(self, search_term: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Search history entries."""
-        entries = self.db.query(HistoryEntry).filter(
-            HistoryEntry.action.ilike(f"%{search_term}%")
-        ).order_by(HistoryEntry.created_at.desc()).limit(limit).all()
+    def search_history(
+        self,
+        search_term: str,
+        limit: int = 50,
+        search_in_details: bool = False,   # Expansión 5
+        enrich: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Search history entries.
 
+        search_in_details (Expansión 5):
+            If True, also searches inside the details JSON column so any
+            matching JSON field value surfaces the row.
+        """
+        from sqlalchemy import or_
+        conditions = [HistoryEntry.action.ilike(f"%{search_term}%")]
+        if search_in_details:
+            conditions.append(HistoryEntry.details.ilike(f"%{search_term}%"))
+
+        entries = (
+            self.db.query(HistoryEntry)
+            .filter(or_(*conditions))
+            .order_by(HistoryEntry.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        result = [e.to_dict() for e in entries]
+        if enrich:
+            result = [self.enrich_entry(e) for e in result]
+        return result
+
+    # Expansión 5 – método dedicado
+    def search_in_details(self, search_term: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Search inside the details JSON column exclusively.
+        Useful when looking for a specific product name, SKU, reason, etc.
+        """
+        entries = (
+            self.db.query(HistoryEntry)
+            .filter(HistoryEntry.details.ilike(f"%{search_term}%"))
+            .order_by(HistoryEntry.created_at.desc())
+            .limit(limit)
+            .all()
+        )
         return [e.to_dict() for e in entries]
 
     def get_user_activity(self, user_id: int, limit: int = 100) -> List[Dict[str, Any]]:
         """Get activity history for a user."""
-        entries = self.db.query(HistoryEntry).filter(
-            HistoryEntry.user_id == user_id
-        ).order_by(HistoryEntry.created_at.desc()).limit(limit).all()
-
+        entries = (
+            self.db.query(HistoryEntry)
+            .filter(HistoryEntry.user_id == user_id)
+            .order_by(HistoryEntry.created_at.desc())
+            .limit(limit)
+            .all()
+        )
         return [e.to_dict() for e in entries]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 6 – Historial de movimientos por producto
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_product_movement_history(
+        self,
+        product_id: int,
+        limit: int = 200,
+        date_from: datetime = None,
+        date_to: datetime = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return all history entries where entity_type='movement' and the
+        details JSON contains the given product_id.
+
+        This covers entries emitted by MOVEMENT_CREATED, MOVEMENT_VALIDATED,
+        MOVEMENT_REJECTED, MOVEMENT_CANCELLED, MOVEMENT_REVERSED, TRANSFER_SENT,
+        and TRANSFER_RECEIVED — all of which include product_id in their payload.
+        """
+        pattern = f'%"product_id": {product_id}%'
+        query = (
+            self.db.query(HistoryEntry)
+            .filter(
+                HistoryEntry.entity_type == "movement",
+                HistoryEntry.details.ilike(pattern),
+            )
+        )
+        if date_from:
+            query = query.filter(HistoryEntry.created_at >= date_from)
+        if date_to:
+            query = query.filter(HistoryEntry.created_at <= date_to)
+
+        entries = query.order_by(HistoryEntry.created_at.desc()).limit(limit).all()
+        return [e.to_dict() for e in entries]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 8 – Integridad referencial
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def sanitize_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check whether the entity referenced by an entry still exists.
+        Adds an "entity_deleted" boolean flag to the dict.
+        If the entity is gone, the original details are preserved for audit.
+        """
+        entity_type = entry.get("entity_type")
+        entity_id = entry.get("entity_id")
+
+        # System entries have no entity to check
+        if not entity_type or entity_type == "system" or not entity_id:
+            entry["entity_deleted"] = False
+            return entry
+
+        table_info = self._ENTITY_TABLES.get(entity_type)
+        if not table_info:
+            entry["entity_deleted"] = False
+            return entry
+
+        try:
+            from sqlalchemy import text
+            table, _ = table_info
+            row = self.db.execute(
+                text(f"SELECT id FROM {table} WHERE id = :eid"),
+                {"eid": entity_id},
+            ).fetchone()
+            entry["entity_deleted"] = row is None
+        except Exception as exc:
+            logger.debug(f"sanitize_entry check failed: {exc}")
+            entry["entity_deleted"] = False
+
+        return entry
+
+    def cleanup_orphaned_references(self) -> int:
+        """
+        Scan all history entries and tag (via the in-memory dict) those
+        whose entity no longer exists.  Because we never mutate history rows,
+        this method returns the COUNT of orphaned entries found.
+
+        Use this to understand data integrity; the UI displays the "(Eliminado)"
+        badge per entry using sanitize_entry().
+        """
+        entries = self.db.query(HistoryEntry).all()
+        orphan_count = 0
+        for entry in entries:
+            result = self.sanitize_entry(entry.to_dict())
+            if result.get("entity_deleted"):
+                orphan_count += 1
+        logger.info(f"Orphaned history references found: {orphan_count}")
+        return orphan_count
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Limpieza
+    # ─────────────────────────────────────────────────────────────────────────
 
     def clear_old_history(self, days: int = 90) -> int:
         """Clear history entries older than specified days."""
-        from datetime import timedelta
         cutoff = datetime.utcnow() - timedelta(days=days)
-
-        count = self.db.query(HistoryEntry).filter(
-            HistoryEntry.created_at < cutoff
-        ).delete()
-
+        count = (
+            self.db.query(HistoryEntry)
+            .filter(HistoryEntry.created_at < cutoff)
+            .delete()
+        )
         self.db.commit()
         logger.info(f"Cleared {count} old history entries")
         return count
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 7 – Respaldo / archivado antes de limpieza
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def archive_history(self, date_from: datetime = None, date_to: datetime = None) -> int:
+        """
+        Copy matching history entries into archive_history, then delete them
+        from the live history table.
+
+        If neither date_from nor date_to are given, nothing is archived (safety
+        guard to prevent accidental full-archive).
+
+        Returns the number of entries archived.
+        """
+        if date_from is None and date_to is None:
+            logger.warning("archive_history called with no date range — skipped")
+            return 0
+
+        query = self.db.query(HistoryEntry)
+        if date_from:
+            query = query.filter(HistoryEntry.created_at >= date_from)
+        if date_to:
+            query = query.filter(HistoryEntry.created_at <= date_to)
+
+        entries = query.all()
+        if not entries:
+            return 0
+
+        archived = []
+        for entry in entries:
+            archived.append(ArchiveHistory(
+                original_id=entry.id,
+                event_type=entry.event_type,
+                entity_type=entry.entity_type,
+                entity_id=entry.entity_id,
+                user_id=entry.user_id,
+                action=entry.action,
+                details=entry.details,
+                created_at=entry.created_at,
+            ))
+
+        self.db.bulk_save_objects(archived)
+
+        # Delete from live table
+        ids_to_delete = [e.id for e in entries]
+        self.db.query(HistoryEntry).filter(HistoryEntry.id.in_(ids_to_delete)).delete(
+            synchronize_session=False
+        )
+
+        self.db.commit()
+        logger.info(f"Archived {len(entries)} history entries")
+        return len(entries)
+
+    def get_archived_history(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        date_from: datetime = None,
+        date_to: datetime = None,
+    ) -> Dict[str, Any]:
+        """Query the archive table."""
+        query = self.db.query(ArchiveHistory)
+        if date_from:
+            query = query.filter(ArchiveHistory.created_at >= date_from)
+        if date_to:
+            query = query.filter(ArchiveHistory.created_at <= date_to)
+
+        total = query.count()
+        entries = (
+            query.order_by(ArchiveHistory.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+        return {
+            "entries": [e.to_dict() for e in entries],
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+        }

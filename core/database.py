@@ -56,6 +56,8 @@ def init_db() -> None:
     )
     # Dashboard widget config model (Exp 9)
     from models import dashboard_widget_config  # noqa: F401
+    # History models live in the service module; import to register with Base.metadata
+    from modules.history import service as _history_service  # noqa: F401
     Base.metadata.create_all(bind=engine)
     if settings.DATABASE_URL.startswith("sqlite"):
         with engine.begin() as connection:
