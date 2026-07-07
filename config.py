@@ -79,7 +79,8 @@ ALERT_TYPES = {
     "low_stock": "Stock bajo",
     "discrepancy": "Discrepancia detectada",
     "validation_failed": "Validacion fallida",
-    "transfer_pending": "Transferencia pendiente"
+    "transfer_pending": "Transferencia pendiente",
+    "manual": "Alerta manual",           # Exp 6
 }
 
 # Alert severities
@@ -87,4 +88,11 @@ ALERT_SEVERITIES = {
     "info": "Informacion",
     "warning": "Advertencia",
     "critical": "Critico"
+}
+
+# Alert priorities (Exp 10)
+ALERT_PRIORITIES = {
+    "low": "Baja",
+    "normal": "Normal",
+    "high": "Alta",
 }
