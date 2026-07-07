@@ -749,6 +749,60 @@ class ReportsService:
                     [[e, c] for e, c in report_data["by_event_type"].items()],
                 )
 
+        # ── Auditoría de Historial ────────────────────────────────────────────
+        elif report_type == "history_audit":
+            h2("Resumen")
+            kv("Total registros en BD:", report_data.get("total_entries", 0))
+            kv("Registros incluidos:", report_data.get("returned_entries", 0))
+
+            if report_data.get("by_entity_type"):
+                h2("Por tipo de entidad")
+                table(
+                    ["Tipo", "Eventos"],
+                    [[t, c] for t, c in report_data["by_entity_type"].items()],
+                )
+
+            if report_data.get("by_event_type"):
+                h2("Por tipo de evento (top 20)")
+                rows = list(report_data["by_event_type"].items())[:20]
+                table(["Evento", "Cantidad"], [[e, c] for e, c in rows])
+
+            if report_data.get("by_user"):
+                h2("Por usuario")
+                table(
+                    ["Usuario", "Acciones"],
+                    [[u, c] for u, c in report_data["by_user"].items()],
+                )
+
+            if report_data.get("by_date"):
+                h2("Actividad diaria")
+                table(
+                    ["Fecha", "Eventos"],
+                    [[d, c] for d, c in report_data["by_date"].items()],
+                )
+
+            if report_data.get("top_entities"):
+                h2("Entidades más activas (top 20)")
+                table(
+                    ["Tipo", "Entidad", "Eventos"],
+                    [[e["entity_type"], e["entity_name"], e["event_count"]]
+                     for e in report_data["top_entities"]],
+                )
+
+            if report_data.get("items"):
+                h2(f"Detalle ({len(report_data['items'])} registros)")
+                table(
+                    ["ID", "Fecha", "Evento", "Tipo", "Entidad", "Usuario", "Acción"],
+                    [[i["id"], i["fecha"], i["evento"], i["tipo"],
+                      i["entidad"], i["usuario"], i["accion"]]
+                     for i in report_data["items"][:200]],
+                )
+                if len(report_data["items"]) > 200:
+                    lines.append(
+                        f"\n  … y {len(report_data['items']) - 200} registros más "
+                        "(exporta a CSV/Excel para verlos todos)"
+                    )
+
         return "\n".join(lines)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1349,6 +1403,143 @@ class ReportsService:
     # ─────────────────────────────────────────────────────────────────────────
     # EXP 13 · TENDENCIAS
     # ─────────────────────────────────────────────────────────────────────────
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # HISTORIAL · AUDITORÍA DE HISTORIAL
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def generate_history_audit_report(
+        self,
+        entity_type: Optional[str] = None,
+        branch_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        event_type: Optional[str] = None,
+        limit: int = 500,
+    ) -> Dict[str, Any]:
+        """
+        Auditoría completa del historial de eventos del sistema.
+
+        El historial solo provee los datos en bruto; este método los agrega,
+        cuenta y estructura para que Reports pueda exportarlos/formatearlos.
+
+        Parámetros
+        ──────────
+        entity_type : filtrar por tipo de entidad (product, branch, movement,
+                      inventory, alert, user, system — None = todos)
+        branch_id   : filtrar entradas que mencionen esta sucursal en details
+                      (usa la misma estrategia LIKE del historial, Expansión 1)
+        user_id     : filtrar por usuario que realizó la acción
+        date_from / date_to : rango de fechas
+        event_type  : filtrar por nombre exacto de evento (ej. "product.updated")
+        limit       : máximo de entradas a incluir en el detalle (def. 500)
+
+        Retorno
+        ───────
+        {
+          "generated_at": ...,
+          "filters": {...},
+          "total_entries": int,
+          "by_event_type": {event_type: count, ...},
+          "by_entity_type": {entity_type: count, ...},
+          "by_user": {user_name: count, ...},
+          "by_date": {YYYY-MM-DD: count, ...},       ← actividad diaria
+          "top_entities": [{entity_type, entity_name, event_count}, ...],
+          "items": [{id, fecha, evento, tipo, entidad, usuario, acción}, ...]
+        }
+        """
+        from modules.history.service import HistoryService
+
+        history_svc = HistoryService(self.db)
+
+        # ── Obtener entradas con enriquecimiento de nombres (Exp 3) ──────────
+        result = history_svc.list_history(
+            limit=limit,
+            event_type=event_type,
+            entity_type=entity_type,
+            user_id=user_id,
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+            enrich=True,          # resuelve user_name y entity_name
+        )
+        entries = result["entries"]
+        total = result["total"]
+
+        # ── Agregaciones ─────────────────────────────────────────────────────
+        by_event_type: Dict[str, int] = {}
+        by_entity_type: Dict[str, int] = {}
+        by_user: Dict[str, int] = {}
+        by_date: Dict[str, int] = {}
+        entity_counts: Dict[str, int] = {}   # "entity_type|entity_name" → count
+
+        items: List[Dict[str, Any]] = []
+
+        for e in entries:
+            ev = e.get("event_type") or "—"
+            ent_type = e.get("entity_type") or "—"
+            user_name = e.get("user_name") or "—"
+            entity_name = e.get("entity_name") or "—"
+            created_raw = e.get("created_at") or ""
+            date_key = created_raw[:10] if created_raw else "—"
+
+            by_event_type[ev] = by_event_type.get(ev, 0) + 1
+            by_entity_type[ent_type] = by_entity_type.get(ent_type, 0) + 1
+            by_user[user_name] = by_user.get(user_name, 0) + 1
+            by_date[date_key] = by_date.get(date_key, 0) + 1
+
+            ec_key = f"{ent_type}|{entity_name}"
+            entity_counts[ec_key] = entity_counts.get(ec_key, 0) + 1
+
+            items.append({
+                "id":          e.get("id"),
+                "fecha":       created_raw[:19].replace("T", " "),
+                "evento":      ev,
+                "tipo":        ent_type,
+                "entidad":     entity_name,
+                "usuario":     user_name,
+                "accion":      e.get("action") or "—",
+                "eliminado":   e.get("entity_deleted", False),
+            })
+
+        # ── Top entidades más activas (máx. 20) ───────────────────────────────
+        top_entities = sorted(
+            [
+                {
+                    "entity_type": k.split("|")[0],
+                    "entity_name": k.split("|")[1],
+                    "event_count": v,
+                }
+                for k, v in entity_counts.items()
+            ],
+            key=lambda x: x["event_count"],
+            reverse=True,
+        )[:20]
+
+        # ── Actividad diaria ordenada ─────────────────────────────────────────
+        by_date_sorted = dict(sorted(by_date.items()))
+
+        return {
+            "generated_at": _fmt_date(datetime.utcnow()),
+            "filters": {
+                "entity_type": entity_type,
+                "event_type":  event_type,
+                "branch_id":   branch_id,
+                "user_id":     user_id,
+                "date_from":   _fmt_date(date_from),
+                "date_to":     _fmt_date(date_to),
+                "limit":       limit,
+            },
+            "total_entries":   total,
+            "returned_entries": len(items),
+            "by_event_type":   dict(sorted(by_event_type.items(), key=lambda x: x[1], reverse=True)),
+            "by_entity_type":  dict(sorted(by_entity_type.items(), key=lambda x: x[1], reverse=True)),
+            "by_user":         dict(sorted(by_user.items(), key=lambda x: x[1], reverse=True)),
+            "by_date":         by_date_sorted,
+            "top_entities":    top_entities,
+            "items":           items,
+        }
 
     def generate_trend_report(
         self,

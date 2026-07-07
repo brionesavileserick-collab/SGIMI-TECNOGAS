@@ -51,6 +51,7 @@ _REPORT_TYPES = [
     ("Transferencias",         "transfers",          False, False),
     ("Tendencias",             "trends",             False, False),
     ("Comparar Períodos",      "comparison",         False, False),
+    ("Auditoría de Historial", "history_audit",      False, True),
 ]
 
 
@@ -210,6 +211,37 @@ class ReportsView(QWidget):
         fl8.addRow("Período 2 hasta:", self.cmp_to2)
         layout.addWidget(self.grp_compare)
 
+        # History audit specific options
+        self.grp_history_audit = QGroupBox("Opciones Auditoría de Historial")
+        fl9 = QFormLayout(self.grp_history_audit)
+
+        self.audit_entity_type_combo = QComboBox()
+        self.audit_entity_type_combo.addItem("Todos los tipos", None)
+        for key, label in [
+            ("product",   "Producto"),
+            ("branch",    "Sucursal"),
+            ("movement",  "Movimiento"),
+            ("inventory", "Inventario"),
+            ("alert",     "Alerta"),
+            ("user",      "Usuario"),
+            ("system",    "Sistema"),
+        ]:
+            self.audit_entity_type_combo.addItem(label, key)
+
+        self.audit_event_type_input = QLineEdit()
+        self.audit_event_type_input.setPlaceholderText("ej. product.updated  (vacío = todos)")
+        self.audit_event_type_input.setMaximumWidth(220)
+
+        self.audit_limit_spin = QSpinBox()
+        self.audit_limit_spin.setRange(10, 5000)
+        self.audit_limit_spin.setValue(500)
+        self.audit_limit_spin.setSuffix(" registros")
+
+        fl9.addRow("Tipo de entidad:", self.audit_entity_type_combo)
+        fl9.addRow("Evento exacto:", self.audit_event_type_input)
+        fl9.addRow("Límite detalle:", self.audit_limit_spin)
+        layout.addWidget(self.grp_history_audit)
+
         # Generate button
         btn_generate = QPushButton("▶  Generar reporte")
         btn_generate.setStyleSheet(
@@ -348,6 +380,7 @@ class ReportsView(QWidget):
         self.grp_top.setVisible(rtype == "top_products")
         self.grp_trends.setVisible(rtype == "trends")
         self.grp_compare.setVisible(rtype == "comparison")
+        self.grp_history_audit.setVisible(rtype == "history_audit")
 
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -457,6 +490,18 @@ class ReportsView(QWidget):
                 period2_from=datetime(d2f.year(), d2f.month(), d2f.day()),
                 period2_to=datetime(d2t.year(), d2t.month(), d2t.day(), 23, 59, 59),
                 branch_id=branch_id,
+            )
+        if rtype == "history_audit":
+            audit_entity_type = self.audit_entity_type_combo.currentData()
+            audit_event_type = self.audit_event_type_input.text().strip() or None
+            return svc.generate_history_audit_report(
+                entity_type=audit_entity_type,
+                branch_id=branch_id,
+                user_id=user_id,
+                date_from=date_from,
+                date_to=date_to,
+                event_type=audit_event_type,
+                limit=self.audit_limit_spin.value(),
             )
         raise ValueError(f"Tipo de reporte desconocido: {rtype}")
 
@@ -580,6 +625,10 @@ class ReportsView(QWidget):
             params["trend_metric"] = self.trend_metric_combo.currentData()
             params["period_days"] = self.trend_period_spin.value()
             params["periods_back"] = self.trend_back_spin.value()
+        if self._last_report_type == "history_audit":
+            params["audit_entity_type"] = self.audit_entity_type_combo.currentData()
+            params["audit_event_type"] = self.audit_event_type_input.text().strip() or None
+            params["audit_limit"] = self.audit_limit_spin.value()
 
         try:
             self.service.save_report_config(
@@ -643,9 +692,16 @@ class ReportsView(QWidget):
                         break
                 self.trend_period_spin.setValue(params.get("period_days", 7))
                 self.trend_back_spin.setValue(params.get("periods_back", 8))
+            if rtype == "history_audit":
+                audit_et = params.get("audit_entity_type")
+                for i in range(self.audit_entity_type_combo.count()):
+                    if self.audit_entity_type_combo.itemData(i) == audit_et:
+                        self.audit_entity_type_combo.setCurrentIndex(i)
+                        break
+                self.audit_event_type_input.setText(params.get("audit_event_type") or "")
+                self.audit_limit_spin.setValue(params.get("audit_limit", 500))
 
-            # Auto-generate
-            self.load_data()
+            # Auto-generate            self.load_data()
         except Exception as exc:
             logger.exception("Could not load saved report config")
             QMessageBox.critical(self, "Error al cargar", str(exc))
