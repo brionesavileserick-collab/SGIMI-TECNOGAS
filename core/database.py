@@ -49,7 +49,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Initialize database, creating all tables."""
+    """Initialize database, creating all tables and running pending migrations."""
     from models import product, branch, inventory, movement, user
     Base.metadata.create_all(bind=engine)
     if settings.DATABASE_URL.startswith("sqlite"):
@@ -58,7 +58,36 @@ def init_db() -> None:
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_product_branch "
                 "ON inventory(product_id, branch_id)"
             )
+    _run_migrations()
     logger.info("Database initialized successfully")
+
+
+def _run_migrations() -> None:
+    """Apply pending schema migrations in order."""
+    import sqlite3
+    import importlib.util
+    from pathlib import Path
+
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        logger.warning("Migrations only supported for SQLite; skipping.")
+        return
+
+    # Extract the file path from the SQLite URL (sqlite:///path)
+    db_path = settings.DATABASE_URL.replace("sqlite:///", "")
+
+    migrations_dir = Path(__file__).parent.parent / "database" / "migrations"
+    migration_file = migrations_dir / "002_branch_expansions.py"
+
+    try:
+        spec = importlib.util.spec_from_file_location("migration_002", migration_file)
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        conn = sqlite3.connect(db_path)
+        migration.upgrade(conn)
+        conn.close()
+    except Exception as exc:
+        logger.error(f"Migration 002 error: {exc}")
 
 
 def drop_db() -> None:

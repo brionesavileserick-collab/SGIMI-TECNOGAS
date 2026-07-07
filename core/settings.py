@@ -70,6 +70,8 @@ class Settings:
         BRANCH_CREATED = "branch.created"
         BRANCH_UPDATED = "branch.updated"
         BRANCH_DELETED = "branch.deleted"
+        BRANCH_STATUS_CHANGED = "branch.status_changed"
+        BRANCH_MANAGER_ASSIGNED = "branch.manager_assigned"
 
         # Movement events
         MOVEMENT_CREATED = "movement.created"
