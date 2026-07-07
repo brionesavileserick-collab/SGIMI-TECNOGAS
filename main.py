@@ -120,11 +120,11 @@ class LoginDialog(QDialog):
 
         layout.addLayout(button_layout)
 
-        # Register link
+        # Register link - always visible
         register_layout = QHBoxLayout()
         register_label = QLabel("¿No tienes cuenta?")
-        register_button = QPushButton("Registrarse")
-        register_button.setStyleSheet("""
+        self.register_button = QPushButton("Registrarse")
+        self.register_button.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
                 color: #2196F3;
@@ -137,9 +137,10 @@ class LoginDialog(QDialog):
                 color: #1976D2;
             }
         """)
-        register_button.clicked.connect(self.open_register_dialog)
+        self.register_button.clicked.connect(self.open_register_dialog)
+        self.register_button.setVisible(True)  # Ensure button is always visible
         register_layout.addWidget(register_label)
-        register_layout.addWidget(register_button)
+        register_layout.addWidget(self.register_button)
         register_layout.addStretch()
         layout.addLayout(register_layout)
 

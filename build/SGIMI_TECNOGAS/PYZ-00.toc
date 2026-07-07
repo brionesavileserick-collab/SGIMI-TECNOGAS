@@ -738,6 +738,18 @@
    'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
    'TECNOGAS\\modules\\user\\__init__.py',
    'PYMODULE'),
+  ('modules.user.repository',
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'TECNOGAS\\modules\\user\\repository.py',
+   'PYMODULE'),
+  ('modules.user.routes',
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'TECNOGAS\\modules\\user\\routes.py',
+   'PYMODULE'),
+  ('modules.user.service',
+   'C:\\Users\\LENOVO\\Desktop\\ERICK\\6to Cuatrimestre - Universidad\\SGIMI '
+   'TECNOGAS\\modules\\user\\service.py',
+   'PYMODULE'),
   ('multiprocessing',
    'C:\\Users\\LENOVO\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\multiprocessing\\__init__.py',
    'PYMODULE'),
