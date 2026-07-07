@@ -50,7 +50,10 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     """Initialize database, creating all tables and running pending migrations."""
-    from models import product, branch, inventory, inventory_history, movement, user
+    from models import (  # noqa: F401 – side-effects register tables with Base
+        product, category, supplier, product_relation, price_history,
+        branch, inventory, inventory_history, movement, user,
+    )
     Base.metadata.create_all(bind=engine)
     if settings.DATABASE_URL.startswith("sqlite"):
         with engine.begin() as connection:

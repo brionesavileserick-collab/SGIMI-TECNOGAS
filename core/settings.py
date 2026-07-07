@@ -65,6 +65,7 @@ class Settings:
         PRODUCT_CREATED = "product.created"
         PRODUCT_UPDATED = "product.updated"
         PRODUCT_DELETED = "product.deleted"
+        PRICE_CHANGED = "product.price_changed"
 
         # Branch events
         BRANCH_CREATED = "branch.created"
