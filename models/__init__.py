@@ -6,6 +6,7 @@ from models.user import User
 from models.branch import Branch
 from models.product import Product
 from models.inventory import Inventory
+from models.inventory_history import InventoryHistory
 from models.movement import Movement, MovementType, MovementState
 
 # Re-export Alert and HistoryEntry from their service modules
@@ -14,7 +15,7 @@ from modules.alerts.service import Alert
 from modules.history.service import HistoryEntry
 
 __all__ = [
-    "User", "Branch", "Product", "Inventory", 
+    "User", "Branch", "Product", "Inventory", "InventoryHistory",
     "Movement", "MovementType", "MovementState",
     "Alert", "HistoryEntry"
 ]

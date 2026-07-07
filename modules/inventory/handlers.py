@@ -1,5 +1,6 @@
 """
 Inventory event handlers - React to events and update inventory.
+Expansiones 4, 5, 6: handlers para nuevos eventos de reposición, alertas y tránsito.
 """
 
 from typing import Dict, Any
@@ -22,10 +23,33 @@ class InventoryHandlers:
 
     def _register_handlers(self):
         """Register all event handlers."""
+        # Handlers originales
         event_bus.subscribe(settings.Events.MOVEMENT_VALIDATED, self.handle_movement_validated)
         event_bus.subscribe(settings.Events.INVENTORY_COUNTED, self.handle_inventory_counted)
         event_bus.subscribe(settings.Events.TRANSFER_RECEIVED, self.handle_transfer_received)
+
+        # Expansión 4: reorder
+        event_bus.subscribe(settings.Events.STOCK_REORDER_NEEDED, self.handle_stock_reorder_needed)
+
+        # Expansión 5: alertas personalizadas
+        event_bus.subscribe(settings.Events.STOCK_CRITICAL, self.handle_stock_critical)
+        event_bus.subscribe(settings.Events.STOCK_EXCEEDED_MAX, self.handle_stock_exceeded_max)
+        event_bus.subscribe(
+            settings.Events.DISCREPANCY_TOLERANCE_BREACHED,
+            self.handle_discrepancy_tolerance_breached,
+        )
+
+        # Expansión 6: tránsito
+        event_bus.subscribe(settings.Events.STOCK_IN_TRANSIT_ADDED, self.handle_in_transit_added)
+        event_bus.subscribe(
+            settings.Events.STOCK_IN_TRANSIT_RECEIVED, self.handle_in_transit_received
+        )
+
         logger.info("Inventory handlers registered")
+
+    # ------------------------------------------------------------------
+    # Handlers originales (sin cambios de comportamiento)
+    # ------------------------------------------------------------------
 
     def handle_movement_validated(self, data: Dict[str, Any]):
         """
@@ -33,35 +57,42 @@ class InventoryHandlers:
         Updates digital stock based on validated movement.
         """
         try:
-            movement_id = data.get("movement_id")
             product_id = data.get("product_id")
             branch_id = data.get("branch_id")
             movement_type = data.get("movement_type")
             quantity = data.get("quantity")
+            movement_id = data.get("movement_id")
 
             if not all([product_id, branch_id, movement_type, quantity]):
                 logger.warning(f"Invalid movement data: {data}")
                 return
 
-            # Calculate stock change based on movement type
             if movement_type == "entrada":
-                # Increase digital stock
-                self.service.adjust_digital_stock(product_id, branch_id, quantity, is_absolute=False)
+                self.service.adjust_digital_stock(
+                    product_id, branch_id, quantity,
+                    is_absolute=False, movement_id=movement_id
+                )
                 logger.info(f"Stock increased: Product {product_id}, Branch {branch_id}, +{quantity}")
 
             elif movement_type == "salida":
-                # Decrease digital stock
-                self.service.adjust_digital_stock(product_id, branch_id, -quantity, is_absolute=False)
+                self.service.adjust_digital_stock(
+                    product_id, branch_id, -quantity,
+                    is_absolute=False, movement_id=movement_id
+                )
                 logger.info(f"Stock decreased: Product {product_id}, Branch {branch_id}, -{quantity}")
 
             elif movement_type == "ajuste":
-                # Set absolute digital stock
-                self.service.adjust_digital_stock(product_id, branch_id, quantity, is_absolute=True)
-                logger.info(f"Stock adjusted: Product {product_id}, Branch {branch_id}, = {quantity}")
+                self.service.adjust_digital_stock(
+                    product_id, branch_id, quantity,
+                    is_absolute=True, movement_id=movement_id
+                )
+                logger.info(f"Stock adjusted: Product {product_id}, Branch {branch_id}, ={quantity}")
 
             elif movement_type == "transferencia":
-                # Decrease digital stock at origin; destination is updated by transfer.received.
-                self.service.adjust_digital_stock(product_id, branch_id, -quantity, is_absolute=False)
+                self.service.adjust_digital_stock(
+                    product_id, branch_id, -quantity,
+                    is_absolute=False, movement_id=movement_id
+                )
                 logger.info(f"Transfer sent: Product {product_id}, Branch {branch_id}, -{quantity}")
 
         except Exception as e:
@@ -70,25 +101,25 @@ class InventoryHandlers:
     def handle_inventory_counted(self, data: Dict[str, Any]):
         """
         Handle inventory.counted event.
-        Updates physical stock and checks for discrepancies.
+        Logs discrepancy detection — physical stock is already updated by adjust_physical_stock.
         """
         try:
             product_id = data.get("product_id")
             branch_id = data.get("branch_id")
             physical_stock = data.get("physical_stock")
+            notes = data.get("notes")
 
             if not all([product_id, branch_id]):
                 logger.warning(f"Invalid inventory count data: {data}")
                 return
 
-            # Get current inventory to check discrepancy
             inventory = self.service.get_inventory_by_product_branch(product_id, branch_id)
-            if inventory:
-                if inventory["digital_stock"] != physical_stock:
-                    logger.info(
-                        f"Discrepancy detected: Product {product_id}, Branch {branch_id}, "
-                        f"Physical={physical_stock}, Digital={inventory['digital_stock']}"
-                    )
+            if inventory and inventory["digital_stock"] != physical_stock:
+                logger.info(
+                    f"Discrepancy detected: Product {product_id}, Branch {branch_id}, "
+                    f"Physical={physical_stock}, Digital={inventory['digital_stock']}"
+                    + (f", Notes='{notes}'" if notes else "")
+                )
 
         except Exception as e:
             logger.error(f"Error handling inventory.counted: {e}")
@@ -107,18 +138,141 @@ class InventoryHandlers:
                 logger.warning(f"Invalid transfer data: {data}")
                 return
 
-            # Increase stock at destination
-            self.service.adjust_digital_stock(product_id, destination_branch_id, quantity, is_absolute=False)
-            logger.info(f"Transfer received: Product {product_id}, Branch {destination_branch_id}, +{quantity}")
+            self.service.adjust_digital_stock(
+                product_id, destination_branch_id, quantity, is_absolute=False
+            )
+            logger.info(
+                f"Transfer received: Product {product_id}, Branch {destination_branch_id}, +{quantity}"
+            )
 
         except Exception as e:
             logger.error(f"Error handling transfer.received: {e}")
+
+    # ------------------------------------------------------------------
+    # Expansión 4: reposición
+    # ------------------------------------------------------------------
+
+    def handle_stock_reorder_needed(self, data: Dict[str, Any]):
+        """
+        Expansión 4 - Reacciona a inventory.stock_reorder_needed.
+        Loguea la necesidad de reposición; módulos externos pueden suscribirse
+        para crear órdenes de compra u otras acciones.
+        """
+        try:
+            inventory_id = data.get("inventory_id")
+            product_id = data.get("product_id")
+            branch_id = data.get("branch_id")
+            digital_stock = data.get("digital_stock")
+            min_stock = data.get("min_stock")
+            priority = data.get("reorder_priority", "normal")
+
+            logger.warning(
+                f"REORDER NEEDED [{priority.upper()}]: inventory={inventory_id}, "
+                f"product={product_id}, branch={branch_id}, "
+                f"stock={digital_stock} (min={min_stock})"
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling stock_reorder_needed: {e}")
+
+    # ------------------------------------------------------------------
+    # Expansión 5: alertas personalizadas
+    # ------------------------------------------------------------------
+
+    def handle_stock_critical(self, data: Dict[str, Any]):
+        """
+        Expansión 5 - Reacciona a inventory.stock_critical.
+        """
+        try:
+            logger.critical(
+                f"STOCK CRÍTICO: inventory={data.get('inventory_id')}, "
+                f"product={data.get('product_id')}, branch={data.get('branch_id')}, "
+                f"stock={data.get('digital_stock')} "
+                f"(umbral={data.get('critical_stock_threshold')})"
+            )
+        except Exception as e:
+            logger.error(f"Error handling stock_critical: {e}")
+
+    def handle_stock_exceeded_max(self, data: Dict[str, Any]):
+        """
+        Expansión 5 - Reacciona a inventory.stock_exceeded_max.
+        """
+        try:
+            logger.warning(
+                f"STOCK EXCEDIDO: inventory={data.get('inventory_id')}, "
+                f"product={data.get('product_id')}, branch={data.get('branch_id')}, "
+                f"stock={data.get('digital_stock')} "
+                f"(max={data.get('max_stock_threshold')})"
+            )
+        except Exception as e:
+            logger.error(f"Error handling stock_exceeded_max: {e}")
+
+    def handle_discrepancy_tolerance_breached(self, data: Dict[str, Any]):
+        """
+        Expansión 5 - Reacciona a inventory.discrepancy_tolerance_breached.
+        """
+        try:
+            logger.warning(
+                f"DISCREPANCIA FUERA DE TOLERANCIA: inventory={data.get('inventory_id')}, "
+                f"product={data.get('product_id')}, branch={data.get('branch_id')}, "
+                f"diferencia={data.get('difference')} "
+                f"(tolerancia={data.get('discrepancy_tolerance')})"
+            )
+        except Exception as e:
+            logger.error(f"Error handling discrepancy_tolerance_breached: {e}")
+
+    # ------------------------------------------------------------------
+    # Expansión 6: tránsito
+    # ------------------------------------------------------------------
+
+    def handle_in_transit_added(self, data: Dict[str, Any]):
+        """
+        Expansión 6 - Reacciona a inventory.in_transit_added.
+        """
+        try:
+            logger.info(
+                f"EN TRÁNSITO: inventory={data.get('inventory_id')}, "
+                f"product={data.get('product_id')}, branch={data.get('branch_id')}, "
+                f"+{data.get('quantity_added')} (total={data.get('total_in_transit')})"
+            )
+        except Exception as e:
+            logger.error(f"Error handling in_transit_added: {e}")
+
+    def handle_in_transit_received(self, data: Dict[str, Any]):
+        """
+        Expansión 6 - Reacciona a inventory.in_transit_received.
+        """
+        try:
+            logger.info(
+                f"TRÁNSITO RECIBIDO: inventory={data.get('inventory_id')}, "
+                f"product={data.get('product_id')}, branch={data.get('branch_id')}, "
+                f"recibido={data.get('quantity_received')}, "
+                f"nuevo_stock={data.get('new_digital_stock')}, "
+                f"restante_tránsito={data.get('remaining_in_transit')}"
+            )
+        except Exception as e:
+            logger.error(f"Error handling in_transit_received: {e}")
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
 
     def unregister_handlers(self):
         """Unregister all event handlers."""
         event_bus.unsubscribe(settings.Events.MOVEMENT_VALIDATED, self.handle_movement_validated)
         event_bus.unsubscribe(settings.Events.INVENTORY_COUNTED, self.handle_inventory_counted)
         event_bus.unsubscribe(settings.Events.TRANSFER_RECEIVED, self.handle_transfer_received)
+        event_bus.unsubscribe(settings.Events.STOCK_REORDER_NEEDED, self.handle_stock_reorder_needed)
+        event_bus.unsubscribe(settings.Events.STOCK_CRITICAL, self.handle_stock_critical)
+        event_bus.unsubscribe(settings.Events.STOCK_EXCEEDED_MAX, self.handle_stock_exceeded_max)
+        event_bus.unsubscribe(
+            settings.Events.DISCREPANCY_TOLERANCE_BREACHED,
+            self.handle_discrepancy_tolerance_breached,
+        )
+        event_bus.unsubscribe(settings.Events.STOCK_IN_TRANSIT_ADDED, self.handle_in_transit_added)
+        event_bus.unsubscribe(
+            settings.Events.STOCK_IN_TRANSIT_RECEIVED, self.handle_in_transit_received
+        )
         logger.info("Inventory handlers unregistered")
 
 

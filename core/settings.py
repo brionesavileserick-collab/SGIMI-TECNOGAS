@@ -81,6 +81,12 @@ class Settings:
         # Inventory events
         INVENTORY_UPDATED = "inventory.updated"
         INVENTORY_COUNTED = "inventory.counted"
+        STOCK_REORDER_NEEDED = "inventory.stock_reorder_needed"
+        STOCK_CRITICAL = "inventory.stock_critical"
+        STOCK_EXCEEDED_MAX = "inventory.stock_exceeded_max"
+        DISCREPANCY_TOLERANCE_BREACHED = "inventory.discrepancy_tolerance_breached"
+        STOCK_IN_TRANSIT_ADDED = "inventory.in_transit_added"
+        STOCK_IN_TRANSIT_RECEIVED = "inventory.in_transit_received"
 
         # Transfer events
         TRANSFER_SENT = "transfer.sent"

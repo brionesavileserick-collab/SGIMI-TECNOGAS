@@ -50,7 +50,7 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     """Initialize database, creating all tables and running pending migrations."""
-    from models import product, branch, inventory, movement, user
+    from models import product, branch, inventory, inventory_history, movement, user
     Base.metadata.create_all(bind=engine)
     if settings.DATABASE_URL.startswith("sqlite"):
         with engine.begin() as connection:
@@ -63,7 +63,11 @@ def init_db() -> None:
 
 
 def _run_migrations() -> None:
-    """Apply pending schema migrations in order."""
+    """
+    Apply all pending schema migrations in order.
+    Scans database/migrations/ for files matching NNN_*.py and runs upgrade()
+    on each one. Each migration is idempotent, so re-running is always safe.
+    """
     import sqlite3
     import importlib.util
     from pathlib import Path
@@ -76,18 +80,25 @@ def _run_migrations() -> None:
     db_path = settings.DATABASE_URL.replace("sqlite:///", "")
 
     migrations_dir = Path(__file__).parent.parent / "database" / "migrations"
-    migration_file = migrations_dir / "002_branch_expansions.py"
 
-    try:
-        spec = importlib.util.spec_from_file_location("migration_002", migration_file)
-        migration = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(migration)
+    # Collect and sort all numbered migration files (001_*.py, 002_*.py, …)
+    migration_files = sorted(
+        f for f in migrations_dir.glob("[0-9][0-9][0-9]_*.py")
+    )
 
-        conn = sqlite3.connect(db_path)
-        migration.upgrade(conn)
-        conn.close()
-    except Exception as exc:
-        logger.error(f"Migration 002 error: {exc}")
+    for migration_file in migration_files:
+        module_name = f"migration_{migration_file.stem}"
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, migration_file)
+            migration = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(migration)
+
+            conn = sqlite3.connect(db_path)
+            migration.upgrade(conn)
+            conn.close()
+            logger.info(f"Migration applied: {migration_file.name}")
+        except Exception as exc:
+            logger.error(f"Migration error in {migration_file.name}: {exc}")
 
 
 def drop_db() -> None:
