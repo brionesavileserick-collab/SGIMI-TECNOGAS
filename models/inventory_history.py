@@ -2,7 +2,7 @@
 InventoryHistory model - Expansión 7: Historial de cambios de stock para auditoría.
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from core.database import Base
@@ -38,6 +38,10 @@ class InventoryHistory(Base):
 
     # Razón o notas del cambio
     reason = Column(String(255), nullable=True)
+
+    # Motivo específico de ajustes digitales
+    digital_adjustment_notes = Column(Text, nullable=True)
+    adjusted_by_name = Column(String(100), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -83,5 +87,7 @@ class InventoryHistory(Base):
             "change_type": self.change_type,
             "movement_id": self.movement_id,
             "reason": self.reason,
+            "digital_adjustment_notes": self.digital_adjustment_notes,
+            "adjusted_by_name": self.adjusted_by_name,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

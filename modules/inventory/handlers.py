@@ -45,6 +45,17 @@ class InventoryHandlers:
             settings.Events.STOCK_IN_TRANSIT_RECEIVED, self.handle_in_transit_received
         )
 
+        # Workflow de conteos (sesiones)
+        event_bus.subscribe(settings.Events.COUNT_SESSION_CREATED, self.handle_count_session_created)
+        event_bus.subscribe(settings.Events.COUNT_SESSION_STARTED, self.handle_count_session_started)
+        event_bus.subscribe(settings.Events.COUNT_SESSION_COMPLETED, self.handle_count_session_completed)
+        event_bus.subscribe(settings.Events.COUNT_ITEM_RECORDED, self.handle_count_item_recorded)
+
+        # Lotes y fechas de caducidad
+        event_bus.subscribe(settings.Events.BATCH_ADDED, self.handle_batch_added)
+        event_bus.subscribe(settings.Events.BATCH_EXPIRING, self.handle_batch_expiring)
+        event_bus.subscribe(settings.Events.BATCH_CONSUMED, self.handle_batch_consumed)
+
         logger.info("Inventory handlers registered")
 
     # ------------------------------------------------------------------
@@ -254,6 +265,101 @@ class InventoryHandlers:
             logger.error(f"Error handling in_transit_received: {e}")
 
     # ------------------------------------------------------------------
+    # Workflow de conteos (sesiones)
+    # ------------------------------------------------------------------
+
+    def handle_count_session_created(self, data: Dict[str, Any]):
+        """Reacciona a inventory.count_session_created."""
+        try:
+            logger.info(
+                f"SESIÓN DE CONTEO CREADA: session={data.get('session_id')}, "
+                f"branch={data.get('branch_id')}, "
+                f"scheduled={data.get('scheduled_date')}"
+            )
+        except Exception as e:
+            logger.error(f"Error handling count_session_created: {e}")
+
+    def handle_count_session_started(self, data: Dict[str, Any]):
+        """Reacciona a inventory.count_session_started."""
+        try:
+            logger.info(
+                f"SESIÓN DE CONTEO INICIADA: session={data.get('session_id')}, "
+                f"branch={data.get('branch_id')}"
+            )
+        except Exception as e:
+            logger.error(f"Error handling count_session_started: {e}")
+
+    def handle_count_session_completed(self, data: Dict[str, Any]):
+        """Reacciona a inventory.count_session_completed."""
+        try:
+            logger.info(
+                f"SESIÓN DE CONTEO COMPLETADA: session={data.get('session_id')}, "
+                f"branch={data.get('branch_id')}, "
+                f"validadores={data.get('validator_count', 1)}"
+            )
+        except Exception as e:
+            logger.error(f"Error handling count_session_completed: {e}")
+
+    def handle_count_item_recorded(self, data: Dict[str, Any]):
+        """Reacciona a inventory.count_item_recorded."""
+        try:
+            diff = data.get("difference", 0)
+            if data.get("is_discrepancy"):
+                logger.warning(
+                    f"DISCREPANCIA EN CONTEO: session={data.get('session_id')}, "
+                    f"inventory={data.get('inventory_id')}, "
+                    f"contado={data.get('counted_physical')}, diferencia={diff}"
+                )
+            else:
+                logger.debug(
+                    f"Item contado: session={data.get('session_id')}, "
+                    f"inventory={data.get('inventory_id')}, "
+                    f"contado={data.get('counted_physical')}"
+                )
+        except Exception as e:
+            logger.error(f"Error handling count_item_recorded: {e}")
+
+    # ------------------------------------------------------------------
+    # Lotes y fechas de caducidad
+    # ------------------------------------------------------------------
+
+    def handle_batch_added(self, data: Dict[str, Any]):
+        """Reacciona a inventory.batch_added."""
+        try:
+            logger.info(
+                f"LOTE AGREGADO: batch={data.get('batch_id')}, "
+                f"inventory={data.get('inventory_id')}, "
+                f"número={data.get('batch_number')}, "
+                f"cantidad={data.get('quantity')}"
+            )
+        except Exception as e:
+            logger.error(f"Error handling batch_added: {e}")
+
+    def handle_batch_expiring(self, data: Dict[str, Any]):
+        """Reacciona a inventory.batch_expiring — lote próximo a vencer."""
+        try:
+            logger.warning(
+                f"LOTE POR VENCER: batch={data.get('batch_id')}, "
+                f"inventory={data.get('inventory_id')}, "
+                f"vence={data.get('expiration_date')}, "
+                f"días_restantes={data.get('days_remaining')}"
+            )
+        except Exception as e:
+            logger.error(f"Error handling batch_expiring: {e}")
+
+    def handle_batch_consumed(self, data: Dict[str, Any]):
+        """Reacciona a inventory.batch_consumed."""
+        try:
+            logger.info(
+                f"LOTE CONSUMIDO: batch={data.get('batch_id')}, "
+                f"inventory={data.get('inventory_id')}, "
+                f"consumido={data.get('quantity_consumed')}, "
+                f"restante={data.get('remaining_in_batch')}"
+            )
+        except Exception as e:
+            logger.error(f"Error handling batch_consumed: {e}")
+
+    # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
 
@@ -273,6 +379,15 @@ class InventoryHandlers:
         event_bus.unsubscribe(
             settings.Events.STOCK_IN_TRANSIT_RECEIVED, self.handle_in_transit_received
         )
+        # Workflow de conteos
+        event_bus.unsubscribe(settings.Events.COUNT_SESSION_CREATED, self.handle_count_session_created)
+        event_bus.unsubscribe(settings.Events.COUNT_SESSION_STARTED, self.handle_count_session_started)
+        event_bus.unsubscribe(settings.Events.COUNT_SESSION_COMPLETED, self.handle_count_session_completed)
+        event_bus.unsubscribe(settings.Events.COUNT_ITEM_RECORDED, self.handle_count_item_recorded)
+        # Lotes
+        event_bus.unsubscribe(settings.Events.BATCH_ADDED, self.handle_batch_added)
+        event_bus.unsubscribe(settings.Events.BATCH_EXPIRING, self.handle_batch_expiring)
+        event_bus.unsubscribe(settings.Events.BATCH_CONSUMED, self.handle_batch_consumed)
         logger.info("Inventory handlers unregistered")
 
 

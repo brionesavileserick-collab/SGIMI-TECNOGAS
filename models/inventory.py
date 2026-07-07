@@ -2,6 +2,7 @@
 Inventory model for tracking stock levels per branch.
 """
 
+from typing import Optional
 from sqlalchemy import Column, Integer, Float, String, Text, DateTime, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -29,8 +30,14 @@ class Inventory(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # --- Expansión 1: Ubicación física ---
-    # Ejemplo: "Pasillo 3, Anaquel B", "Bodega principal", "Refrigerador 2"
-    location = Column(String(100), nullable=True)
+    # Ubicación libre (legacy) — columna DB 'location' para retrocompatibilidad
+    location_free = Column("location", String(100), nullable=True)
+
+    # --- Ubicación jerárquica (opcional) ---
+    aisle = Column(String(20), nullable=True)
+    shelf = Column(String(20), nullable=True)
+    level = Column(String(10), nullable=True)
+    bin = Column(String(20), nullable=True)
 
     # --- Expansión 2: Notas en conteos ---
     # Notas del último conteo físico registrado
@@ -58,10 +65,18 @@ class Inventory(Base):
     # Costo unitario local; puede diferir por sucursal
     unit_cost = Column(Float, nullable=True)
 
+    # --- Workflow de conteos ---
+    count_session_id = Column(Integer, ForeignKey("inventory_count_sessions.id", ondelete="SET NULL"), nullable=True)
+
+    # --- Unidades de medida variables (opcional) ---
+    alternate_unit = Column(String(20), nullable=True)
+    conversion_factor = Column(Float, nullable=True)
+
     # Relationships
     product = relationship("Product", back_populates="inventory_items")
     branch = relationship("Branch", back_populates="inventory_items")
     history = relationship("InventoryHistory", back_populates="inventory", cascade="all, delete-orphan")
+    batches = relationship("InventoryBatch", back_populates="inventory", cascade="all, delete-orphan")
 
     def __repr__(self):
         return (
@@ -115,6 +130,34 @@ class Inventory(Base):
             return 0.0
         return self.digital_stock * self.unit_cost
 
+    @property
+    def location(self) -> Optional[str]:
+        """Alias retrocompatible de location_free."""
+        return self.location_free
+
+    @property
+    def location_path(self) -> Optional[str]:
+        """Ruta jerárquica formateada o ubicación libre."""
+        parts = []
+        if self.aisle:
+            parts.append(f"Pasillo {self.aisle}")
+        if self.shelf:
+            parts.append(f"Anaquel {self.shelf}")
+        if self.level:
+            parts.append(f"Nivel {self.level}")
+        if self.bin:
+            parts.append(f"Posición {self.bin}")
+        if parts:
+            return " > ".join(parts)
+        return self.location_free
+
+    @property
+    def stock_in_alternate_unit(self) -> Optional[float]:
+        """Stock expresado en unidad alternativa si está configurada."""
+        if not self.alternate_unit or not self.conversion_factor or self.conversion_factor == 0:
+            return None
+        return self.digital_stock / self.conversion_factor
+
     def to_dict(self):
         """Convert inventory to dictionary."""
         return {
@@ -134,8 +177,14 @@ class Inventory(Base):
             "max_stock": self.max_stock,
             "last_count_date": self.last_count_date.isoformat() if self.last_count_date else None,
             "is_active": self.is_active,
-            # Expansión 1
+            # Expansión 1 / ubicación
             "location": self.location,
+            "location_free": self.location_free,
+            "location_path": self.location_path,
+            "aisle": self.aisle,
+            "shelf": self.shelf,
+            "level": self.level,
+            "bin": self.bin,
             # Expansión 2
             "last_count_notes": self.last_count_notes,
             # Expansión 3
@@ -150,6 +199,12 @@ class Inventory(Base):
             "in_transit_quantity": self.in_transit_quantity,
             # Expansión 8
             "unit_cost": self.unit_cost,
+            # Workflow de conteos
+            "count_session_id": self.count_session_id,
+            # Unidades alternativas
+            "alternate_unit": self.alternate_unit,
+            "conversion_factor": self.conversion_factor,
+            "stock_in_alternate_unit": self.stock_in_alternate_unit,
             # Timestamps
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

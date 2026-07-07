@@ -7,9 +7,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
 from models.inventory import Inventory
 from models.inventory_history import InventoryHistory
+from models.inventory_count_session import InventoryCountSession
+from models.inventory_count_item import InventoryCountItem
+from models.inventory_batch import InventoryBatch
 from models.product import Product
 from models.branch import Branch
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 
 class InventoryRepository:
@@ -400,7 +403,7 @@ class InventoryRepository:
                 Inventory.is_active == True,
                 Product.is_active == True,
                 Branch.is_active == True,
-                Inventory.location.ilike(f"%{location}%"),
+                Inventory.location_free.ilike(f"%{location}%"),
             )
             .all()
         )
@@ -547,6 +550,8 @@ class InventoryRepository:
         change_type: str,
         movement_id: int = None,
         reason: str = None,
+        digital_adjustment_notes: str = None,
+        adjusted_by_name: str = None,
     ) -> InventoryHistory:
         """
         Expansión 7 - Registra un cambio de stock en el historial de auditoría.
@@ -561,6 +566,8 @@ class InventoryRepository:
             change_type=change_type,
             movement_id=movement_id,
             reason=reason,
+            digital_adjustment_notes=digital_adjustment_notes,
+            adjusted_by_name=adjusted_by_name,
         )
         self.db.add(record)
         self.db.commit()
@@ -820,3 +827,369 @@ class InventoryRepository:
                     tag_set.add(tag)
 
         return sorted(tag_set)
+
+    # ------------------------------------------------------------------
+    # Workflow de conteos (sesiones)
+    # ------------------------------------------------------------------
+
+    def create_count_session(self, session_data: dict) -> InventoryCountSession:
+        """Crear sesión de conteo."""
+        session = InventoryCountSession(**session_data)
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
+    def get_count_session_by_id(self, session_id: int) -> Optional[InventoryCountSession]:
+        """Obtener sesión por ID."""
+        return (
+            self.db.query(InventoryCountSession)
+            .filter(InventoryCountSession.id == session_id)
+            .first()
+        )
+
+    def get_count_sessions_by_branch(
+        self, branch_id: int, status: str = None
+    ) -> List[InventoryCountSession]:
+        """Sesiones de conteo por sucursal."""
+        query = self.db.query(InventoryCountSession).filter(
+            InventoryCountSession.branch_id == branch_id
+        )
+        if status:
+            query = query.filter(InventoryCountSession.status == status)
+        return query.order_by(InventoryCountSession.scheduled_date.desc()).all()
+
+    def update_count_session(
+        self, session_id: int, data: dict
+    ) -> Optional[InventoryCountSession]:
+        """Actualizar sesión de conteo."""
+        session = self.get_count_session_by_id(session_id)
+        if not session:
+            return None
+        for key, value in data.items():
+            if hasattr(session, key):
+                setattr(session, key, value)
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
+    def add_count_item(self, session_id: int, item_data: dict) -> InventoryCountItem:
+        """Agregar item a sesión de conteo."""
+        item_data["session_id"] = session_id
+        item = InventoryCountItem(**item_data)
+        self.db.add(item)
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def get_count_items(self, session_id: int) -> List[InventoryCountItem]:
+        """Items de una sesión de conteo."""
+        return (
+            self.db.query(InventoryCountItem)
+            .filter(InventoryCountItem.session_id == session_id)
+            .order_by(InventoryCountItem.id)
+            .all()
+        )
+
+    def get_count_item_by_inventory(
+        self, session_id: int, inventory_id: int
+    ) -> Optional[InventoryCountItem]:
+        """Item de conteo para un inventario en una sesión."""
+        return (
+            self.db.query(InventoryCountItem)
+            .filter(
+                InventoryCountItem.session_id == session_id,
+                InventoryCountItem.inventory_id == inventory_id,
+            )
+            .first()
+        )
+
+    def update_count_item(
+        self, item_id: int, data: dict
+    ) -> Optional[InventoryCountItem]:
+        """Actualizar item de conteo."""
+        item = self.db.query(InventoryCountItem).filter(
+            InventoryCountItem.id == item_id
+        ).first()
+        if not item:
+            return None
+        for key, value in data.items():
+            if hasattr(item, key):
+                setattr(item, key, value)
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def get_active_count_session(self, branch_id: int) -> Optional[InventoryCountSession]:
+        """Sesión en progreso para una sucursal."""
+        return (
+            self.db.query(InventoryCountSession)
+            .filter(
+                InventoryCountSession.branch_id == branch_id,
+                InventoryCountSession.status == "in_progress",
+            )
+            .first()
+        )
+
+    def get_pending_count_sessions(self) -> List[InventoryCountSession]:
+        """Sesiones pendientes programadas para hoy o antes."""
+        today_end = datetime.utcnow().replace(hour=23, minute=59, second=59)
+        return (
+            self.db.query(InventoryCountSession)
+            .filter(
+                InventoryCountSession.status == "pending",
+                InventoryCountSession.scheduled_date <= today_end,
+            )
+            .order_by(InventoryCountSession.scheduled_date)
+            .all()
+        )
+
+    def get_overdue_count_sessions(self) -> List[InventoryCountSession]:
+        """Sesiones pendientes con fecha programada vencida."""
+        now = datetime.utcnow()
+        return (
+            self.db.query(InventoryCountSession)
+            .filter(
+                InventoryCountSession.status == "pending",
+                InventoryCountSession.scheduled_date < now,
+            )
+            .order_by(InventoryCountSession.scheduled_date)
+            .all()
+        )
+
+    def populate_count_items_for_session(self, session_id: int, branch_id: int) -> int:
+        """Pre-poblar items de conteo con inventario activo de la sucursal."""
+        existing = {
+            i.inventory_id
+            for i in self.get_count_items(session_id)
+            if i.inventory_id is not None
+        }
+        items = self.get_all(limit=10000, branch_id=branch_id)
+        added = 0
+        for inv in items:
+            if inv.id in existing:
+                continue
+            self.add_count_item(session_id, {
+                "inventory_id": inv.id,
+                "product_id": inv.product_id,
+                "expected_physical": inv.physical_stock,
+            })
+            added += 1
+        return added
+
+    # ------------------------------------------------------------------
+    # Lotes y fechas de caducidad
+    # ------------------------------------------------------------------
+
+    def add_batch(self, inventory_id: int, batch_data: dict) -> InventoryBatch:
+        """Agregar lote a un item de inventario."""
+        batch_data["inventory_id"] = inventory_id
+        batch = InventoryBatch(**batch_data)
+        self.db.add(batch)
+        self.db.commit()
+        self.db.refresh(batch)
+        return batch
+
+    def get_batches_by_inventory(self, inventory_id: int) -> List[InventoryBatch]:
+        """Lotes de un item."""
+        return (
+            self.db.query(InventoryBatch)
+            .filter(InventoryBatch.inventory_id == inventory_id)
+            .order_by(InventoryBatch.expiration_date.asc().nullslast())
+            .all()
+        )
+
+    def get_batch_by_id(self, batch_id: int) -> Optional[InventoryBatch]:
+        """Obtener lote por ID."""
+        return self.db.query(InventoryBatch).filter(InventoryBatch.id == batch_id).first()
+
+    def get_batch_by_number(
+        self, inventory_id: int, batch_number: str
+    ) -> Optional[InventoryBatch]:
+        """Buscar lote por número."""
+        return (
+            self.db.query(InventoryBatch)
+            .filter(
+                InventoryBatch.inventory_id == inventory_id,
+                InventoryBatch.batch_number == batch_number,
+            )
+            .first()
+        )
+
+    def get_batches_near_expiration(
+        self, branch_id: int = None, days: int = 30
+    ) -> List[InventoryBatch]:
+        """Lotes próximos a vencer."""
+        cutoff = date.today() + timedelta(days=days)
+        query = (
+            self.db.query(InventoryBatch)
+            .join(Inventory, InventoryBatch.inventory_id == Inventory.id)
+            .filter(
+                Inventory.is_active == True,
+                InventoryBatch.expiration_date.isnot(None),
+                InventoryBatch.expiration_date <= cutoff,
+                InventoryBatch.quantity > 0,
+            )
+        )
+        if branch_id:
+            query = query.filter(Inventory.branch_id == branch_id)
+        return query.order_by(InventoryBatch.expiration_date).all()
+
+    def consume_from_batch(self, batch_id: int, quantity: int) -> Optional[InventoryBatch]:
+        """Consumir cantidad de un lote (FIFO)."""
+        batch = self.get_batch_by_id(batch_id)
+        if not batch or batch.quantity < quantity:
+            return None
+        batch.quantity -= quantity
+        self.db.commit()
+        self.db.refresh(batch)
+        return batch
+
+    def update_batch(self, batch_id: int, data: dict) -> Optional[InventoryBatch]:
+        """Actualizar lote."""
+        batch = self.get_batch_by_id(batch_id)
+        if not batch:
+            return None
+        for key, value in data.items():
+            if hasattr(batch, key):
+                setattr(batch, key, value)
+        self.db.commit()
+        self.db.refresh(batch)
+        return batch
+
+    def inventory_has_batches(self, inventory_id: int) -> bool:
+        """True si el item tiene al menos un lote."""
+        return (
+            self.db.query(InventoryBatch)
+            .filter(InventoryBatch.inventory_id == inventory_id)
+            .count() > 0
+        )
+
+    # ------------------------------------------------------------------
+    # Ubicación jerárquica
+    # ------------------------------------------------------------------
+
+    def get_by_hierarchical_location(
+        self,
+        branch_id: int,
+        aisle: str = None,
+        shelf: str = None,
+        level: str = None,
+        bin: str = None,
+    ) -> List[Inventory]:
+        """Buscar items por componentes de ubicación jerárquica."""
+        query = (
+            self.db.query(Inventory)
+            .join(Product)
+            .join(Branch)
+            .filter(
+                Inventory.branch_id == branch_id,
+                Inventory.is_active == True,
+                Product.is_active == True,
+                Branch.is_active == True,
+            )
+        )
+        if aisle:
+            query = query.filter(Inventory.aisle == aisle)
+        if shelf:
+            query = query.filter(Inventory.shelf == shelf)
+        if level:
+            query = query.filter(Inventory.level == level)
+        if bin:
+            query = query.filter(Inventory.bin == bin)
+        return query.all()
+
+    def get_all_aisles_in_branch(self, branch_id: int) -> List[str]:
+        """Lista de pasillos únicos en una sucursal."""
+        results = (
+            self.db.query(Inventory.aisle)
+            .filter(
+                Inventory.branch_id == branch_id,
+                Inventory.is_active == True,
+                Inventory.aisle.isnot(None),
+                Inventory.aisle != "",
+            )
+            .distinct()
+            .all()
+        )
+        return sorted(r[0] for r in results if r[0])
+
+    def get_items_in_aisle(self, branch_id: int, aisle: str) -> List[Inventory]:
+        """Items en un pasillo."""
+        return self.get_by_hierarchical_location(branch_id, aisle=aisle)
+
+    def get_location_summary(self, branch_id: int) -> List[Dict[str, Any]]:
+        """Resumen de distribución por pasillo."""
+        results = (
+            self.db.query(
+                Inventory.aisle,
+                func.count(Inventory.id).label("item_count"),
+            )
+            .filter(
+                Inventory.branch_id == branch_id,
+                Inventory.is_active == True,
+            )
+            .group_by(Inventory.aisle)
+            .all()
+        )
+        return [
+            {
+                "aisle": r.aisle or "(sin pasillo)",
+                "item_count": r.item_count,
+            }
+            for r in results
+        ]
+
+    def search_by_location_text(self, branch_id: int, query_text: str) -> List[Inventory]:
+        """Buscar por cualquier parte de la ubicación (libre o jerárquica)."""
+        pattern = f"%{query_text}%"
+        return (
+            self.db.query(Inventory)
+            .join(Product)
+            .join(Branch)
+            .filter(
+                Inventory.branch_id == branch_id,
+                Inventory.is_active == True,
+                Product.is_active == True,
+                Branch.is_active == True,
+                or_(
+                    Inventory.location_free.ilike(pattern),
+                    Inventory.aisle.ilike(pattern),
+                    Inventory.shelf.ilike(pattern),
+                    Inventory.level.ilike(pattern),
+                    Inventory.bin.ilike(pattern),
+                ),
+            )
+            .all()
+        )
+
+    def get_valuation_by_category(self, branch_id: int) -> List[Dict[str, Any]]:
+        """Valor de inventario agrupado por categoría de producto."""
+        from models.category import Category
+        results = (
+            self.db.query(
+                Category.id,
+                Category.name,
+                func.sum(Inventory.digital_stock * Inventory.unit_cost).label("total_value"),
+                func.count(Inventory.id).label("item_count"),
+            )
+            .join(Product, Inventory.product_id == Product.id)
+            .outerjoin(Category, Product.category_id == Category.id)
+            .filter(
+                Inventory.branch_id == branch_id,
+                Inventory.is_active == True,
+                Product.is_active == True,
+                Inventory.unit_cost.isnot(None),
+            )
+            .group_by(Category.id, Category.name)
+            .all()
+        )
+        return [
+            {
+                "category_id": r.id,
+                "category_name": r.name or "(sin categoría)",
+                "total_value": float(r.total_value or 0),
+                "item_count": r.item_count,
+            }
+            for r in results
+        ]

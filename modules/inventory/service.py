@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from modules.inventory.repository import InventoryRepository
 from core.event_bus import event_bus
 from core.settings import settings
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import logging
 
 logger = logging.getLogger(__name__)
@@ -170,6 +170,8 @@ class InventoryService:
         branch_id: int,
         quantity: int,
         notes: str = None,
+        validator_name: str = None,
+        skip_session_sync: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
         Adjust physical stock (for inventory counts).
@@ -206,6 +208,20 @@ class InventoryService:
                 reason=notes,
             )
 
+        # Vincular a sesión de conteo activa si existe
+        if not skip_session_sync:
+            active_session = self.repository.get_active_count_session(branch_id)
+            if active_session and inventory:
+                self._link_physical_count_to_session(
+                    active_session.id,
+                    inventory.id,
+                    product_id,
+                    quantity,
+                    notes=notes,
+                    validator_name=validator_name,
+                )
+                self.repository.update(inventory.id, {"count_session_id": active_session.id})
+
         event_data = {
             "product_id": product_id,
             "branch_id": branch_id,
@@ -232,6 +248,8 @@ class InventoryService:
         quantity: int,
         is_absolute: bool = False,
         movement_id: int = None,
+        reason: str = None,
+        adjusted_by_name: str = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Adjust digital stock.
@@ -282,6 +300,9 @@ class InventoryService:
                 new_digital=inventory.digital_stock,
                 change_type=change_type,
                 movement_id=movement_id,
+                reason=reason if change_type == "movement" else None,
+                digital_adjustment_notes=reason if change_type == "adjustment" else None,
+                adjusted_by_name=adjusted_by_name if change_type == "adjustment" else None,
             )
 
             self._emit_inventory_updated(inventory)
@@ -715,6 +736,8 @@ class InventoryService:
         change_type: str,
         movement_id: int = None,
         reason: str = None,
+        digital_adjustment_notes: str = None,
+        adjusted_by_name: str = None,
     ) -> None:
         """
         Expansión 7 - Registra cualquier cambio de stock en el historial.
@@ -730,6 +753,8 @@ class InventoryService:
                 change_type=change_type,
                 movement_id=movement_id,
                 reason=reason,
+                digital_adjustment_notes=digital_adjustment_notes,
+                adjusted_by_name=adjusted_by_name,
             )
         except Exception as e:
             # El historial nunca debe interrumpir el flujo principal
@@ -944,3 +969,511 @@ class InventoryService:
                     buckets["antiguo_mas_30d"] += 1
 
         return {"branch_id": branch_id, "total": len(items), "distribution": buckets}
+
+    # ------------------------------------------------------------------
+    # Registro de ajustes digitales
+    # ------------------------------------------------------------------
+
+    def get_digital_adjustments(
+        self, inventory_id: int, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Historial filtrado solo de ajustes digitales."""
+        records = self.repository.get_history_by_change_type(
+            inventory_id, "adjustment", limit=limit
+        )
+        return [r.to_dict() for r in records]
+
+    # ------------------------------------------------------------------
+    # Workflow de conteos (sesiones)
+    # ------------------------------------------------------------------
+
+    def create_count_session(
+        self,
+        branch_id: int,
+        scheduled_date: datetime,
+        notes: str = None,
+    ) -> Dict[str, Any]:
+        """Crear sesión de conteo programada."""
+        session = self.repository.create_count_session({
+            "branch_id": branch_id,
+            "scheduled_date": scheduled_date,
+            "notes": notes,
+            "status": "pending",
+            "validator_count": 1,
+        })
+        event_bus.emit(settings.Events.COUNT_SESSION_CREATED, {
+            "session_id": session.id,
+            "branch_id": branch_id,
+            "scheduled_date": scheduled_date.isoformat() if scheduled_date else None,
+        })
+        logger.info(f"Count session created: {session.id} for branch {branch_id}")
+        return session.to_dict()
+
+    def start_count_session(self, session_id: int) -> Optional[Dict[str, Any]]:
+        """Iniciar sesión de conteo (status → in_progress)."""
+        session = self.repository.get_count_session_by_id(session_id)
+        if not session:
+            return None
+        if session.status not in ("pending",):
+            raise ValueError(f"No se puede iniciar sesión en estado '{session.status}'")
+
+        updated = self.repository.update_count_session(session_id, {
+            "status": "in_progress",
+            "started_at": datetime.utcnow(),
+        })
+        if updated and updated.branch_id:
+            self.repository.populate_count_items_for_session(session_id, updated.branch_id)
+
+        event_bus.emit(settings.Events.COUNT_SESSION_STARTED, {
+            "session_id": session_id,
+            "branch_id": updated.branch_id if updated else None,
+        })
+        logger.info(f"Count session started: {session_id}")
+        return updated.to_dict() if updated else None
+
+    def record_count_item(
+        self,
+        session_id: int,
+        inventory_id: int,
+        counted_physical: int,
+        validator_name: str = None,
+        notes: str = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Registrar conteo de un item en la sesión."""
+        session = self.repository.get_count_session_by_id(session_id)
+        if not session or session.status != "in_progress":
+            raise ValueError("La sesión no está en progreso")
+
+        inventory = self.repository.get_by_id(inventory_id)
+        if not inventory:
+            raise ValueError("Item de inventario no encontrado")
+
+        item = self.repository.get_count_item_by_inventory(session_id, inventory_id)
+        expected = item.expected_physical if item else inventory.physical_stock
+        difference = counted_physical - expected
+        is_discrepancy = difference != 0
+
+        item_data = {
+            "counted_physical": counted_physical,
+            "difference": difference,
+            "is_discrepancy": is_discrepancy,
+            "counted_at": datetime.utcnow(),
+            "validator_name": validator_name,
+            "notes": notes,
+        }
+
+        if item:
+            updated_item = self.repository.update_count_item(item.id, item_data)
+        else:
+            item_data.update({
+                "inventory_id": inventory_id,
+                "product_id": inventory.product_id,
+                "expected_physical": expected,
+            })
+            updated_item = self.repository.add_count_item(session_id, item_data)
+
+        # Aplicar conteo físico real (sin re-sincronizar item de sesión)
+        self.adjust_physical_stock(
+            inventory.product_id,
+            inventory.branch_id,
+            counted_physical,
+            notes=notes,
+            validator_name=validator_name,
+            skip_session_sync=True,
+        )
+
+        event_bus.emit(settings.Events.COUNT_ITEM_RECORDED, {
+            "session_id": session_id,
+            "inventory_id": inventory_id,
+            "counted_physical": counted_physical,
+            "difference": difference,
+            "is_discrepancy": is_discrepancy,
+        })
+
+        return updated_item.to_dict() if updated_item else None
+
+    def complete_count_session(
+        self, session_id: int, validator_count: int = 1
+    ) -> Optional[Dict[str, Any]]:
+        """Completar sesión de conteo."""
+        session = self.repository.get_count_session_by_id(session_id)
+        if not session:
+            return None
+        if session.status != "in_progress":
+            raise ValueError(f"No se puede completar sesión en estado '{session.status}'")
+
+        updated = self.repository.update_count_session(session_id, {
+            "status": "completed",
+            "completed_at": datetime.utcnow(),
+            "validator_count": max(1, validator_count),
+        })
+
+        # Limpiar vínculo de sesión activa en inventario
+        items = self.repository.get_count_items(session_id)
+        for item in items:
+            if item.inventory_id:
+                inv = self.repository.get_by_id(item.inventory_id)
+                if inv and inv.count_session_id == session_id:
+                    self.repository.update(item.inventory_id, {"count_session_id": None})
+
+        event_bus.emit(settings.Events.COUNT_SESSION_COMPLETED, {
+            "session_id": session_id,
+            "branch_id": session.branch_id,
+            "validator_count": max(1, validator_count),
+        })
+        logger.info(f"Count session completed: {session_id}")
+        return updated.to_dict() if updated else None
+
+    def cancel_count_session(self, session_id: int) -> Optional[Dict[str, Any]]:
+        """Cancelar sesión de conteo."""
+        session = self.repository.get_count_session_by_id(session_id)
+        if not session:
+            return None
+        if session.status == "completed":
+            raise ValueError("No se puede cancelar una sesión completada")
+
+        updated = self.repository.update_count_session(session_id, {
+            "status": "cancelled",
+            "completed_at": datetime.utcnow(),
+        })
+        return updated.to_dict() if updated else None
+
+    def get_count_session_summary(self, session_id: int) -> Optional[Dict[str, Any]]:
+        """Resumen de una sesión de conteo."""
+        session = self.repository.get_count_session_by_id(session_id)
+        if not session:
+            return None
+
+        items = self.repository.get_count_items(session_id)
+        total = len(items)
+        counted = sum(1 for i in items if i.counted_physical is not None)
+        discrepancies = sum(1 for i in items if i.is_discrepancy)
+
+        return {
+            "session": session.to_dict(),
+            "total_items": total,
+            "counted_items": counted,
+            "pending_items": total - counted,
+            "discrepancy_count": discrepancies,
+            "items": [i.to_dict() for i in items],
+        }
+
+    def get_pending_count_sessions(
+        self, branch_id: int = None
+    ) -> List[Dict[str, Any]]:
+        """Sesiones pendientes (hoy o vencidas)."""
+        sessions = self.repository.get_pending_count_sessions()
+        if branch_id:
+            sessions = [s for s in sessions if s.branch_id == branch_id]
+        return [s.to_dict() for s in sessions]
+
+    def get_overdue_count_sessions(
+        self, branch_id: int = None
+    ) -> List[Dict[str, Any]]:
+        """Sesiones vencidas."""
+        sessions = self.repository.get_overdue_count_sessions()
+        if branch_id:
+            sessions = [s for s in sessions if s.branch_id == branch_id]
+        return [s.to_dict() for s in sessions]
+
+    def get_count_sessions_by_branch(
+        self, branch_id: int, status: str = None
+    ) -> List[Dict[str, Any]]:
+        """Listar sesiones de una sucursal."""
+        sessions = self.repository.get_count_sessions_by_branch(branch_id, status)
+        return [s.to_dict() for s in sessions]
+
+    def _link_physical_count_to_session(
+        self,
+        session_id: int,
+        inventory_id: int,
+        product_id: int,
+        counted_physical: int,
+        notes: str = None,
+        validator_name: str = None,
+    ) -> None:
+        """Vincula un conteo físico directo a la sesión activa sin re-aplicar stock."""
+        item = self.repository.get_count_item_by_inventory(session_id, inventory_id)
+        inventory = self.repository.get_by_id(inventory_id)
+        expected = item.expected_physical if item else (inventory.physical_stock if inventory else 0)
+        difference = counted_physical - expected
+
+        item_data = {
+            "counted_physical": counted_physical,
+            "difference": difference,
+            "is_discrepancy": difference != 0,
+            "counted_at": datetime.utcnow(),
+            "validator_name": validator_name,
+            "notes": notes,
+        }
+        if item:
+            self.repository.update_count_item(item.id, item_data)
+        else:
+            item_data.update({
+                "inventory_id": inventory_id,
+                "product_id": product_id,
+                "expected_physical": expected,
+            })
+            self.repository.add_count_item(session_id, item_data)
+
+        event_bus.emit(settings.Events.COUNT_ITEM_RECORDED, {
+            "session_id": session_id,
+            "inventory_id": inventory_id,
+            "counted_physical": counted_physical,
+            "difference": difference,
+            "is_discrepancy": difference != 0,
+        })
+
+    # ------------------------------------------------------------------
+    # Lotes y fechas de caducidad
+    # ------------------------------------------------------------------
+
+    def add_batch(
+        self,
+        inventory_id: int,
+        batch_number: str = None,
+        manufacturing_date: date = None,
+        expiration_date: date = None,
+        quantity: int = 0,
+        unit_cost: float = None,
+        notes: str = None,
+    ) -> Dict[str, Any]:
+        """Agregar lote a un item de inventario."""
+        if quantity < 0:
+            raise ValueError("La cantidad del lote no puede ser negativa")
+
+        batch = self.repository.add_batch(inventory_id, {
+            "batch_number": batch_number,
+            "manufacturing_date": manufacturing_date,
+            "expiration_date": expiration_date,
+            "quantity": quantity,
+            "unit_cost": unit_cost,
+            "notes": notes,
+        })
+
+        event_bus.emit(settings.Events.BATCH_ADDED, {
+            "batch_id": batch.id,
+            "inventory_id": inventory_id,
+            "batch_number": batch_number,
+            "quantity": quantity,
+        })
+
+        if expiration_date:
+            days_left = (expiration_date - date.today()).days
+            if 0 <= days_left <= 30:
+                event_bus.emit(settings.Events.BATCH_EXPIRING, {
+                    "batch_id": batch.id,
+                    "inventory_id": inventory_id,
+                    "expiration_date": expiration_date.isoformat(),
+                    "days_remaining": days_left,
+                })
+
+        return batch.to_dict()
+
+    def get_inventory_batches(self, inventory_id: int) -> List[Dict[str, Any]]:
+        """Obtener todos los lotes de un item."""
+        batches = self.repository.get_batches_by_inventory(inventory_id)
+        return [b.to_dict() for b in batches]
+
+    def consume_batch(self, inventory_id: int, quantity: int) -> Dict[str, Any]:
+        """Consumir del lote más antiguo (FIFO)."""
+        if quantity <= 0:
+            raise ValueError("La cantidad debe ser positiva")
+
+        batches = self.repository.get_batches_by_inventory(inventory_id)
+        remaining = quantity
+        consumed = []
+
+        for batch in batches:
+            if remaining <= 0:
+                break
+            if batch.quantity <= 0:
+                continue
+            take = min(batch.quantity, remaining)
+            updated = self.repository.consume_from_batch(batch.id, take)
+            if updated:
+                consumed.append({"batch_id": batch.id, "quantity": take})
+                remaining -= take
+                event_bus.emit(settings.Events.BATCH_CONSUMED, {
+                    "batch_id": batch.id,
+                    "inventory_id": inventory_id,
+                    "quantity_consumed": take,
+                    "remaining_in_batch": updated.quantity,
+                })
+
+        return {
+            "inventory_id": inventory_id,
+            "requested": quantity,
+            "consumed": quantity - remaining,
+            "batches": consumed,
+        }
+
+    def get_expiring_batches(
+        self, branch_id: int = None, days: int = 30
+    ) -> List[Dict[str, Any]]:
+        """Lotes próximos a vencer."""
+        batches = self.repository.get_batches_near_expiration(branch_id, days)
+        result = []
+        for b in batches:
+            data = b.to_dict()
+            if b.expiration_date:
+                data["days_remaining"] = (b.expiration_date - date.today()).days
+            result.append(data)
+        return result
+
+    def get_batch_summary(self, inventory_id: int) -> Dict[str, Any]:
+        """Resumen de lotes vs stock total."""
+        inventory = self.repository.get_by_id(inventory_id)
+        if not inventory:
+            return {}
+
+        batches = self.repository.get_batches_by_inventory(inventory_id)
+        batch_total = sum(b.quantity for b in batches)
+
+        return {
+            "inventory_id": inventory_id,
+            "digital_stock": inventory.digital_stock,
+            "batch_total_quantity": batch_total,
+            "batch_count": len(batches),
+            "has_batches": len(batches) > 0,
+            "batches": [b.to_dict() for b in batches],
+        }
+
+    # ------------------------------------------------------------------
+    # Ubicación jerárquica
+    # ------------------------------------------------------------------
+
+    def set_hierarchical_location(
+        self,
+        inventory_id: int,
+        aisle: str = None,
+        shelf: str = None,
+        level: str = None,
+        bin: str = None,
+        free_text: str = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Establecer ubicación jerárquica y/o texto libre."""
+        update_data = {
+            "aisle": aisle,
+            "shelf": shelf,
+            "level": level,
+            "bin": bin,
+        }
+        if free_text is not None:
+            update_data["location_free"] = free_text
+
+        updated = self.repository.update(inventory_id, update_data)
+        return updated.to_dict() if updated else None
+
+    def get_location_path(self, inventory_id: int) -> Optional[str]:
+        """Obtener path completo formateado de ubicación."""
+        inventory = self.repository.get_by_id(inventory_id)
+        return inventory.location_path if inventory else None
+
+    def get_items_by_aisle(self, branch_id: int, aisle: str) -> List[Dict[str, Any]]:
+        """Items en un pasillo."""
+        items = self.repository.get_items_in_aisle(branch_id, aisle)
+        return [self._enrich_inventory(i) for i in items]
+
+    def search_by_location(self, branch_id: int, query: str) -> List[Dict[str, Any]]:
+        """Buscar por cualquier parte de la ubicación."""
+        items = self.repository.search_by_location_text(branch_id, query)
+        return [i.to_dict() for i in items]
+
+    def get_location_summary(self, branch_id: int) -> List[Dict[str, Any]]:
+        """Resumen de distribución por ubicación."""
+        return self.repository.get_location_summary(branch_id)
+
+    def get_all_aisles(self, branch_id: int) -> List[str]:
+        """Lista de pasillos en una sucursal."""
+        return self.repository.get_all_aisles_in_branch(branch_id)
+
+    # ------------------------------------------------------------------
+    # Unidades de medida variables
+    # ------------------------------------------------------------------
+
+    def get_stock_in_unit(self, inventory_id: int, unit: str = "base") -> Optional[Dict[str, Any]]:
+        """Obtener stock en unidad específica."""
+        inventory = self.repository.get_by_id(inventory_id)
+        if not inventory:
+            return None
+
+        if unit == "base":
+            return {
+                "inventory_id": inventory_id,
+                "unit": "base",
+                "quantity": inventory.digital_stock,
+            }
+
+        if unit == "alternate":
+            if not inventory.alternate_unit or not inventory.conversion_factor:
+                return None
+            return {
+                "inventory_id": inventory_id,
+                "unit": inventory.alternate_unit,
+                "quantity": inventory.stock_in_alternate_unit,
+                "conversion_factor": inventory.conversion_factor,
+            }
+
+        return None
+
+    def convert_stock_unit(
+        self, inventory_id: int, from_unit: str, to_unit: str
+    ) -> Optional[float]:
+        """Convertir stock entre unidades base y alternativa."""
+        inventory = self.repository.get_by_id(inventory_id)
+        if not inventory or not inventory.conversion_factor:
+            return None
+
+        if from_unit == "base" and to_unit == "alternate":
+            return inventory.stock_in_alternate_unit
+        if from_unit == "alternate" and to_unit == "base":
+            return inventory.digital_stock
+
+        return None
+
+    def adjust_alternate_stock(
+        self, inventory_id: int, quantity: float, unit: str = "alternate"
+    ) -> Optional[Dict[str, Any]]:
+        """Ajustar stock expresado en unidad alternativa."""
+        inventory = self.repository.get_by_id(inventory_id)
+        if not inventory or not inventory.conversion_factor:
+            raise ValueError("Unidad alternativa no configurada")
+
+        if unit == "alternate":
+            base_qty = int(quantity * inventory.conversion_factor)
+        else:
+            base_qty = int(quantity)
+
+        return self.adjust_digital_stock(
+            inventory.product_id,
+            inventory.branch_id,
+            base_qty,
+            is_absolute=True,
+            reason=f"Ajuste en unidad alternativa ({quantity} {inventory.alternate_unit or unit})",
+        )
+
+    # ------------------------------------------------------------------
+    # Valoración ampliada
+    # ------------------------------------------------------------------
+
+    def get_valuation_by_category(self, branch_id: int) -> List[Dict[str, Any]]:
+        """Valor agrupado por categoría de producto."""
+        return self.repository.get_valuation_by_category(branch_id)
+
+    def get_cost_history(self, inventory_id: int) -> List[Dict[str, Any]]:
+        """Historial de cambios de costo vía PriceHistory del producto."""
+        from models.price_history import PriceHistory
+
+        inventory = self.repository.get_by_id(inventory_id)
+        if not inventory:
+            return []
+
+        records = (
+            self.repository.db.query(PriceHistory)
+            .filter(PriceHistory.product_id == inventory.product_id)
+            .order_by(PriceHistory.created_at.desc())
+            .limit(50)
+            .all()
+        )
+        return [r.to_dict() for r in records]

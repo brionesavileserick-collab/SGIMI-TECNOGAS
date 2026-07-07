@@ -13,9 +13,9 @@ from PyQt6.QtWidgets import (
     QMessageBox, QDialog, QFormLayout, QSpinBox, QComboBox,
     QGroupBox, QTabWidget, QTextEdit, QDoubleSpinBox,
     QCheckBox, QHeaderView, QFrame, QDialogButtonBox,
-    QSizePolicy, QScrollArea,
+    QSizePolicy, QScrollArea, QDateEdit, QDateTimeEdit,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QDate, QDateTime
 from PyQt6.QtGui import QColor, QFont
 
 from modules.inventory.service import InventoryService
@@ -65,6 +65,7 @@ class InventoryItemDialog(QDialog):
         tabs.addTab(self._tab_reposicion(), "Reposición")
         tabs.addTab(self._tab_alertas(),    "Alertas")
         tabs.addTab(self._tab_transito(),   "Tránsito")
+        tabs.addTab(self._tab_lotes(),      "Lotes")
         tabs.addTab(self._tab_valor(),      "Valor")
         root.addWidget(tabs)
 
@@ -109,7 +110,55 @@ class InventoryItemDialog(QDialog):
         self.min_stock.setValue(d.get("min_stock", 0))
         form.addRow("Stock mínimo:", self.min_stock)
 
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
+        form.addRow(sep2)
+
+        self.new_digital = QSpinBox()
+        self.new_digital.setRange(0, 999999)
+        self.new_digital.setValue(d.get("digital_stock", 0))
+        self.new_digital.valueChanged.connect(self._on_digital_changed)
+        form.addRow("Ajustar stock digital:", self.new_digital)
+
+        self.adjustment_reason = QLineEdit()
+        self.adjustment_reason.setPlaceholderText("Motivo del ajuste digital (opcional)")
+        self.adjustment_reason.setEnabled(False)
+        form.addRow("Motivo del ajuste:", self.adjustment_reason)
+
+        self.adjusted_by_name = QLineEdit()
+        self.adjusted_by_name.setPlaceholderText("Nombre de quien ajusta (opcional)")
+        self.adjusted_by_name.setEnabled(False)
+        form.addRow("Ajustado por:", self.adjusted_by_name)
+
+        sep3 = QFrame(); sep3.setFrameShape(QFrame.Shape.HLine)
+        form.addRow(sep3)
+
+        self.alternate_unit_input = QLineEdit(d.get("alternate_unit") or "")
+        self.alternate_unit_input.setPlaceholderText("ej. caja, kg, litro")
+        form.addRow("Unidad alternativa:", self.alternate_unit_input)
+
+        self.conversion_factor_input = QDoubleSpinBox()
+        self.conversion_factor_input.setRange(0.0, 999999.99)
+        self.conversion_factor_input.setDecimals(4)
+        self.conversion_factor_input.setSpecialValueText("(no definido)")
+        cf = d.get("conversion_factor")
+        self.conversion_factor_input.setValue(cf if cf else 0.0)
+        form.addRow("Factor de conversión:", self.conversion_factor_input)
+
+        if d.get("alternate_unit") and d.get("stock_in_alternate_unit") is not None:
+            form.addRow(
+                QLabel(
+                    f"<b>Stock en {d['alternate_unit']}:</b> "
+                    f"{d['stock_in_alternate_unit']:.2f}"
+                )
+            )
+
         return w
+
+    def _on_digital_changed(self, value):
+        original = self.inventory_data.get("digital_stock", 0)
+        changed = value != original
+        self.adjustment_reason.setEnabled(changed)
+        self.adjusted_by_name.setEnabled(changed)
 
     # ── Tab 2: Ubicación física ──────────────────────────────────────────
     def _tab_ubicacion(self) -> QWidget:
@@ -117,15 +166,61 @@ class InventoryItemDialog(QDialog):
         form = QFormLayout(w)
         form.setContentsMargins(12, 12, 12, 12)
 
-        self.location_input = QLineEdit(self.inventory_data.get("location") or "")
-        self.location_input.setPlaceholderText("ej. Pasillo 3, Anaquel B")
-        form.addRow("Ubicación:", self.location_input)
+        d = self.inventory_data
 
-        hint = QLabel("Indica dónde físicamente se encuentra este producto en la sucursal.")
+        self.location_input = QLineEdit(d.get("location_free") or d.get("location") or "")
+        self.location_input.setPlaceholderText("ej. Bodega principal, Refrigerador 2")
+        form.addRow("Ubicación libre:", self.location_input)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        form.addRow(sep)
+        form.addRow(QLabel("<b>Ubicación jerárquica (opcional)</b>"))
+
+        self.aisle_input = QLineEdit(d.get("aisle") or "")
+        self.aisle_input.setPlaceholderText("Pasillo")
+        form.addRow("Pasillo:", self.aisle_input)
+
+        self.shelf_input = QLineEdit(d.get("shelf") or "")
+        self.shelf_input.setPlaceholderText("Anaquel")
+        form.addRow("Anaquel:", self.shelf_input)
+
+        self.level_input = QLineEdit(d.get("level") or "")
+        self.level_input.setPlaceholderText("Nivel")
+        form.addRow("Nivel:", self.level_input)
+
+        self.bin_input = QLineEdit(d.get("bin") or "")
+        self.bin_input.setPlaceholderText("Posición")
+        form.addRow("Posición:", self.bin_input)
+
+        path = d.get("location_path") or ""
+        self.location_path_label = QLabel(path or "(sin ubicación definida)")
+        self.location_path_label.setStyleSheet("color: #1565c0; font-style: italic;")
+        form.addRow("Vista previa:", self.location_path_label)
+
+        for widget in (self.aisle_input, self.shelf_input, self.level_input, self.bin_input):
+            widget.textChanged.connect(self._update_location_preview)
+
+        hint = QLabel("Usa ubicación libre, jerárquica, o ambas según necesites.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: gray; font-size: 11px;")
         form.addRow(hint)
         return w
+
+    def _update_location_preview(self):
+        parts = []
+        if self.aisle_input.text().strip():
+            parts.append(f"Pasillo {self.aisle_input.text().strip()}")
+        if self.shelf_input.text().strip():
+            parts.append(f"Anaquel {self.shelf_input.text().strip()}")
+        if self.level_input.text().strip():
+            parts.append(f"Nivel {self.level_input.text().strip()}")
+        if self.bin_input.text().strip():
+            parts.append(f"Posición {self.bin_input.text().strip()}")
+        if parts:
+            self.location_path_label.setText(" > ".join(parts))
+        else:
+            free = self.location_input.text().strip()
+            self.location_path_label.setText(free or "(sin ubicación definida)")
 
     # ── Tab 3: Tags ──────────────────────────────────────────────────────
     def _tab_tags(self) -> QWidget:
@@ -253,7 +348,130 @@ class InventoryItemDialog(QDialog):
         layout.addStretch()
         return w
 
-    # ── Tab 7: Valor de inventario ────────────────────────────────────────
+    # ── Tab 7: Lotes y fechas de caducidad ──────────────────────────────
+    def _tab_lotes(self) -> QWidget:
+        """Tab de gestión de lotes para el item de inventario."""
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        inv_id = self.inventory_data.get("id")
+
+        # Resumen de lotes
+        try:
+            summary = self.service.get_batch_summary(inv_id) if inv_id else {}
+        except Exception:
+            summary = {}
+
+        batch_count = summary.get("batch_count", 0)
+        batch_total = summary.get("batch_total_quantity", 0)
+        info_lbl = QLabel(
+            f"<b>Lotes registrados:</b> {batch_count} | "
+            f"<b>Cantidad total en lotes:</b> {batch_total}"
+        )
+        layout.addWidget(info_lbl)
+
+        # Botón agregar lote
+        add_btn = QPushButton("+ Agregar Lote")
+        add_btn.setFixedWidth(160)
+        add_btn.clicked.connect(lambda: self._on_add_batch(inv_id, lotes_table))
+        layout.addWidget(add_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        # Tabla de lotes existentes
+        lotes_table = QTableWidget()
+        lotes_table.setColumnCount(6)
+        lotes_table.setHorizontalHeaderLabels([
+            "Nº Lote", "Fabricación", "Caducidad", "Cantidad", "Costo unit.", "Notas"
+        ])
+        lotes_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        lotes_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        lotes_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(lotes_table)
+
+        # Botón FIFO consume
+        consume_box = QGroupBox("Consumir (FIFO)")
+        consume_form = QFormLayout(consume_box)
+        self._batch_consume_spin = QSpinBox()
+        self._batch_consume_spin.setRange(1, 999999)
+        consume_form.addRow("Cantidad:", self._batch_consume_spin)
+        consume_btn = QPushButton("Consumir del lote más antiguo")
+        consume_btn.clicked.connect(lambda: self._on_consume_batch(inv_id, lotes_table, info_lbl))
+        consume_form.addRow(consume_btn)
+        layout.addWidget(consume_box)
+
+        hint = QLabel(
+            "Los lotes son informativos y no afectan el cálculo de stock principal. "
+            "FIFO consume del lote con caducidad más próxima primero."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(hint)
+
+        # Poblar tabla
+        self._reload_batches_table(inv_id, lotes_table)
+
+        return w
+
+    def _reload_batches_table(self, inv_id: int, table: QTableWidget):
+        """Recargar la tabla de lotes desde el servicio."""
+        if not inv_id:
+            table.setRowCount(0)
+            return
+        try:
+            batches = self.service.get_inventory_batches(inv_id)
+            table.setRowCount(len(batches))
+            today_str = __import__("datetime").date.today().isoformat()
+            for row, b in enumerate(batches):
+                table.setItem(row, 0, QTableWidgetItem(b.get("batch_number") or "—"))
+                table.setItem(row, 1, QTableWidgetItem((b.get("manufacturing_date") or "")[:10] or "—"))
+                exp = b.get("expiration_date") or ""
+                exp_cell = QTableWidgetItem(exp[:10] if exp else "—")
+                if exp and exp[:10] < today_str:
+                    exp_cell.setBackground(QColor("#ffaaaa"))  # vencido
+                elif exp and exp[:10] <= __import__("datetime").date.today().replace(
+                    day=__import__("datetime").date.today().day
+                ).isoformat()[:7] + "-" + str(
+                    __import__("datetime").date.today().day + 30
+                ).zfill(2) if exp else False:
+                    pass  # caducidad lejana
+                table.setItem(row, 2, exp_cell)
+                table.setItem(row, 3, QTableWidgetItem(str(b.get("quantity", 0))))
+                cost = b.get("unit_cost")
+                table.setItem(row, 4, QTableWidgetItem(f"${cost:,.2f}" if cost is not None else "—"))
+                table.setItem(row, 5, QTableWidgetItem(b.get("notes") or ""))
+            table.resizeColumnsToContents()
+        except Exception as e:
+            logger.error(f"Error recargando lotes: {e}")
+
+    def _on_add_batch(self, inv_id: int, table: QTableWidget):
+        """Abrir BatchDialog para agregar un lote nuevo."""
+        if not inv_id:
+            QMessageBox.warning(self, "Error", "Guarda el item primero antes de agregar lotes.")
+            return
+        dlg = BatchDialog(self.db, inv_id, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._reload_batches_table(inv_id, table)
+
+    def _on_consume_batch(self, inv_id: int, table: QTableWidget, info_lbl: QLabel):
+        """Consumir stock del lote más antiguo (FIFO)."""
+        qty = self._batch_consume_spin.value()
+        try:
+            result = self.service.consume_batch(inv_id, qty)
+            consumed = result.get("consumed", 0)
+            QMessageBox.information(
+                self, "Éxito",
+                f"Se consumieron {consumed} unidades de {len(result.get('batches', []))} lote(s)."
+            )
+            self._reload_batches_table(inv_id, table)
+            summary = self.service.get_batch_summary(inv_id)
+            info_lbl.setText(
+                f"<b>Lotes registrados:</b> {summary.get('batch_count', 0)} | "
+                f"<b>Cantidad total en lotes:</b> {summary.get('batch_total_quantity', 0)}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    # ── Tab 8: Valor de inventario ────────────────────────────────────────
     def _tab_valor(self) -> QWidget:
         w = QWidget()
         form = QFormLayout(w)
@@ -451,11 +669,25 @@ class InventoryHistoryDialog(QDialog):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
+        # Filter bar
+        filter_bar = QHBoxLayout()
+        filter_bar.addWidget(QLabel("Filtrar por tipo:"))
+        self._type_filter = QComboBox()
+        self._type_filter.addItem("Todos", None)
+        for t in ("count", "movement", "adjustment", "transfer"):
+            self._type_filter.addItem(t, t)
+        self._type_filter.currentIndexChanged.connect(self._load)
+        filter_bar.addWidget(self._type_filter)
+        filter_bar.addStretch()
+        layout.addLayout(filter_bar)
+
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
+        self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
-            "Fecha", "Tipo", "Físico antes", "Físico nuevo",
-            "Digital antes", "Digital nuevo", "Razón / Notas",
+            "Fecha", "Tipo",
+            "Físico antes", "Físico nuevo",
+            "Digital antes", "Digital nuevo",
+            "Razón / Notas", "Motivo ajuste", "Ajustado por",
         ])
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -470,18 +702,42 @@ class InventoryHistoryDialog(QDialog):
 
     def _load(self):
         try:
-            result = self.service.get_stock_history(self.inventory_id, limit=100)
+            result = self.service.get_stock_history(self.inventory_id, limit=200)
             records = result.get("records", [])
+            # Apply type filter
+            filter_type = self._type_filter.currentData()
+            if filter_type:
+                records = [r for r in records if r.get("change_type") == filter_type]
+
             self.table.setRowCount(len(records))
             for row, r in enumerate(records):
                 created = (r.get("created_at") or "")[:19].replace("T", " ")
                 self.table.setItem(row, 0, QTableWidgetItem(created))
-                self.table.setItem(row, 1, QTableWidgetItem(r.get("change_type", "")))
+
+                change_type = r.get("change_type", "")
+                type_cell = QTableWidgetItem(change_type)
+                type_colors = {
+                    "count": "#e3f2fd", "movement": "#e8f5e9",
+                    "adjustment": "#fff9c4", "transfer": "#fce4ec",
+                }
+                type_cell.setBackground(QColor(type_colors.get(change_type, "#ffffff")))
+                self.table.setItem(row, 1, type_cell)
+
                 self.table.setItem(row, 2, QTableWidgetItem(str(r.get("previous_physical", 0))))
                 self.table.setItem(row, 3, QTableWidgetItem(str(r.get("new_physical", 0))))
                 self.table.setItem(row, 4, QTableWidgetItem(str(r.get("previous_digital", 0))))
                 self.table.setItem(row, 5, QTableWidgetItem(str(r.get("new_digital", 0))))
                 self.table.setItem(row, 6, QTableWidgetItem(r.get("reason") or ""))
+                self.table.setItem(row, 7, QTableWidgetItem(r.get("digital_adjustment_notes") or ""))
+                self.table.setItem(row, 8, QTableWidgetItem(r.get("adjusted_by_name") or ""))
+
+                # Highlight rows with discrepancy
+                if r.get("introduced_discrepancy"):
+                    for col in range(9):
+                        cell = self.table.item(row, col)
+                        if cell:
+                            cell.setBackground(QColor("#fff3cd"))
+
             self.table.resizeColumnsToContents()
         except Exception as e:
             logger.exception("Error loading inventory history")
@@ -755,6 +1011,10 @@ class InventoryListView(QWidget):
         self.count_button = QPushButton("📋 Registrar Conteo")
         self.count_button.clicked.connect(self.on_count_inventory)
         actions.addWidget(self.count_button)
+
+        self.count_session_btn = QPushButton("📅 Sesiones de Conteo")
+        self.count_session_btn.clicked.connect(self.on_count_sessions)
+        actions.addWidget(self.count_session_btn)
 
         # Global-view toggle — only shown in matrix mode
         self.global_view_btn = QPushButton("🌐 Vista Global")
@@ -1083,6 +1343,24 @@ class InventoryListView(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Error al registrar conteo:\n{e}")
 
+    def on_count_sessions(self):
+        """Abrir gestor de sesiones de conteo formal."""
+        effective_branch_id = (
+            operation_mode.current_branch_id
+            if operation_mode.is_branch
+            else self.current_branch_id
+        )
+        if not effective_branch_id:
+            QMessageBox.information(
+                self, "Sesiones de Conteo",
+                "Selecciona una sucursal para gestionar sesiones de conteo."
+            )
+            return
+        dialog = InventoryCountSessionDialog(self.db, effective_branch_id, parent=self)
+        dialog.exec()
+        # Reload in case a count was completed
+        self.load_inventory(self.search_input.text() or None)
+
     def show_metrics(self):
         """Abrir diálogo de métricas (Expansión 9)."""
         effective_branch_id = (
@@ -1237,3 +1515,717 @@ class InventoryListView(QWidget):
         close.clicked.connect(dialog.accept)
         layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
         dialog.exec()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BatchDialog  –  Crear o editar un lote de inventario
+# ═══════════════════════════════════════════════════════════════════════════
+class BatchDialog(QDialog):
+    """Diálogo para crear un nuevo lote en un item de inventario."""
+
+    def __init__(self, db: Session, inventory_id: int, batch_data: dict = None, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.inventory_id = inventory_id
+        self.batch_data = batch_data or {}
+        self.service = InventoryService(db)
+        self.setWindowTitle("Agregar Lote" if not batch_data else "Editar Lote")
+        self.setMinimumWidth(420)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setContentsMargins(12, 12, 12, 12)
+
+        self.batch_number = QLineEdit(self.batch_data.get("batch_number") or "")
+        self.batch_number.setPlaceholderText("Número de lote (opcional)")
+        form.addRow("Número de lote:", self.batch_number)
+
+        self.quantity = QSpinBox()
+        self.quantity.setRange(0, 999999)
+        self.quantity.setValue(self.batch_data.get("quantity", 0))
+        form.addRow("Cantidad:", self.quantity)
+
+        self.manufacturing_date = QDateEdit()
+        self.manufacturing_date.setCalendarPopup(True)
+        self.manufacturing_date.setSpecialValueText("(no definida)")
+        self.manufacturing_date.setDate(QDate.currentDate())
+        self._mfg_enabled = QCheckBox("Definir fecha de fabricación")
+        mfg = self.batch_data.get("manufacturing_date")
+        self._mfg_enabled.setChecked(bool(mfg))
+        self.manufacturing_date.setEnabled(bool(mfg))
+        if mfg:
+            parts = str(mfg)[:10].split("-")
+            self.manufacturing_date.setDate(QDate(int(parts[0]), int(parts[1]), int(parts[2])))
+        self._mfg_enabled.toggled.connect(self.manufacturing_date.setEnabled)
+        form.addRow(self._mfg_enabled)
+        form.addRow("Fecha fabricación:", self.manufacturing_date)
+
+        self.expiration_date = QDateEdit()
+        self.expiration_date.setCalendarPopup(True)
+        self.expiration_date.setDate(QDate.currentDate().addYears(1))
+        self._exp_enabled = QCheckBox("Definir fecha de caducidad")
+        exp = self.batch_data.get("expiration_date")
+        self._exp_enabled.setChecked(bool(exp))
+        self.expiration_date.setEnabled(bool(exp))
+        if exp:
+            parts = str(exp)[:10].split("-")
+            self.expiration_date.setDate(QDate(int(parts[0]), int(parts[1]), int(parts[2])))
+        self._exp_enabled.toggled.connect(self.expiration_date.setEnabled)
+        form.addRow(self._exp_enabled)
+        form.addRow("Fecha caducidad:", self.expiration_date)
+
+        self.unit_cost = QDoubleSpinBox()
+        self.unit_cost.setRange(0.0, 9999999.99)
+        self.unit_cost.setDecimals(2)
+        self.unit_cost.setPrefix("$ ")
+        self.unit_cost.setSpecialValueText("(no definido)")
+        uc = self.batch_data.get("unit_cost")
+        self.unit_cost.setValue(uc if uc is not None else 0.0)
+        form.addRow("Costo unitario:", self.unit_cost)
+
+        self.notes = QTextEdit(self.batch_data.get("notes") or "")
+        self.notes.setPlaceholderText("Notas del lote (opcional)...")
+        self.notes.setMaximumHeight(60)
+        form.addRow("Notas:", self.notes)
+
+        layout.addLayout(form)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self._on_accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _on_accept(self):
+        try:
+            from datetime import date as _date
+            mfg = None
+            if self._mfg_enabled.isChecked():
+                qd = self.manufacturing_date.date()
+                mfg = _date(qd.year(), qd.month(), qd.day())
+            exp = None
+            if self._exp_enabled.isChecked():
+                qd = self.expiration_date.date()
+                exp = _date(qd.year(), qd.month(), qd.day())
+            uc = self.unit_cost.value()
+            self.service.add_batch(
+                self.inventory_id,
+                batch_number=self.batch_number.text().strip() or None,
+                manufacturing_date=mfg,
+                expiration_date=exp,
+                quantity=self.quantity.value(),
+                unit_cost=uc if uc > 0 else None,
+                notes=self.notes.toPlainText().strip() or None,
+            )
+            self.accept()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo guardar el lote:\n{e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# InventoryCountSessionDialog  –  Gestionar sesiones de conteo de una sucursal
+# ═══════════════════════════════════════════════════════════════════════════
+class InventoryCountSessionDialog(QDialog):
+    """
+    Lista las sesiones de conteo de una sucursal y permite crear nuevas,
+    iniciarlas y ver sus resultados.
+    """
+
+    def __init__(self, db: Session, branch_id: int, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.branch_id = branch_id
+        self.service = InventoryService(db)
+        self.setWindowTitle("Sesiones de Conteo Físico")
+        self.setMinimumSize(720, 480)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # ── Toolbar ──────────────────────────────────────────────────────
+        toolbar = QHBoxLayout()
+        new_btn = QPushButton("+ Nueva Sesión")
+        new_btn.clicked.connect(self._on_new_session)
+        toolbar.addWidget(new_btn)
+
+        self._status_filter = QComboBox()
+        self._status_filter.addItem("Todas", None)
+        for s in ("pending", "in_progress", "completed", "cancelled"):
+            self._status_filter.addItem(s.replace("_", " ").capitalize(), s)
+        self._status_filter.currentIndexChanged.connect(self._load)
+        toolbar.addWidget(QLabel("Estado:"))
+        toolbar.addWidget(self._status_filter)
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
+
+        # ── Tabla de sesiones ─────────────────────────────────────────────
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels([
+            "ID", "Programada", "Iniciada", "Completada", "Estado", "Validadores", "Acciones"
+        ])
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setColumnHidden(0, True)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table)
+
+        close = QPushButton("Cerrar")
+        close.clicked.connect(self.accept)
+        layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+
+        self._load()
+
+    def _load(self):
+        status = self._status_filter.currentData()
+        try:
+            sessions = self.service.get_count_sessions_by_branch(self.branch_id, status)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+            return
+
+        STATUS_COLORS = {
+            "pending": "#fff9c4", "in_progress": "#cce5ff",
+            "completed": "#d4edda", "cancelled": "#f8d7da",
+        }
+
+        self.table.setRowCount(len(sessions))
+        for row, s in enumerate(sessions):
+            self.table.setItem(row, 0, QTableWidgetItem(str(s["id"])))
+            self.table.setItem(row, 1, QTableWidgetItem((s.get("scheduled_date") or "")[:16].replace("T", " ")))
+            self.table.setItem(row, 2, QTableWidgetItem((s.get("started_at") or "—")[:16].replace("T", " ")))
+            self.table.setItem(row, 3, QTableWidgetItem((s.get("completed_at") or "—")[:16].replace("T", " ")))
+
+            status_val = s.get("status", "")
+            st_cell = QTableWidgetItem(status_val.replace("_", " ").capitalize())
+            st_cell.setBackground(QColor(STATUS_COLORS.get(status_val, "#ffffff")))
+            self.table.setItem(row, 4, st_cell)
+
+            self.table.setItem(row, 5, QTableWidgetItem(str(s.get("validator_count", 1))))
+            self.table.setCellWidget(row, 6, self._make_session_actions(s))
+
+        self.table.resizeColumnsToContents()
+
+    def _make_session_actions(self, session: dict) -> QWidget:
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(4, 2, 4, 2)
+        lay.setSpacing(4)
+        status = session.get("status", "")
+
+        if status == "pending":
+            start_btn = QPushButton("▶ Iniciar")
+            start_btn.setFixedHeight(26)
+            start_btn.clicked.connect(lambda _, s=session: self._on_start_session(s["id"]))
+            lay.addWidget(start_btn)
+
+            cancel_btn = QPushButton("✖ Cancelar")
+            cancel_btn.setFixedHeight(26)
+            cancel_btn.clicked.connect(lambda _, s=session: self._on_cancel_session(s["id"]))
+            lay.addWidget(cancel_btn)
+
+        elif status == "in_progress":
+            exec_btn = QPushButton("📋 Ejecutar Conteo")
+            exec_btn.setFixedHeight(26)
+            exec_btn.clicked.connect(lambda _, s=session: self._on_execute_session(s["id"]))
+            lay.addWidget(exec_btn)
+
+            complete_btn = QPushButton("✔ Completar")
+            complete_btn.setFixedHeight(26)
+            complete_btn.clicked.connect(lambda _, s=session: self._on_complete_session(s["id"]))
+            lay.addWidget(complete_btn)
+
+        elif status in ("completed", "cancelled"):
+            view_btn = QPushButton("🔍 Ver Resumen")
+            view_btn.setFixedHeight(26)
+            view_btn.clicked.connect(lambda _, s=session: self._on_view_summary(s["id"]))
+            lay.addWidget(view_btn)
+
+        return w
+
+    def _on_new_session(self):
+        dlg = _NewCountSessionForm(self.db, self.branch_id, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._load()
+
+    def _on_start_session(self, session_id: int):
+        try:
+            self.service.start_count_session(session_id)
+            QMessageBox.information(self, "Éxito", "Sesión iniciada. El inventario ha sido pre-cargado.")
+            self._load()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    def _on_execute_session(self, session_id: int):
+        dlg = InventoryCountExecutionDialog(self.db, session_id, parent=self)
+        dlg.exec()
+        self._load()
+
+    def _on_complete_session(self, session_id: int):
+        from PyQt6.QtWidgets import QInputDialog
+        validators, ok = QInputDialog.getInt(
+            self, "Completar Sesión",
+            "Número de personas que validaron el conteo:", 1, 1, 99
+        )
+        if not ok:
+            return
+        try:
+            self.service.complete_count_session(session_id, validator_count=validators)
+            QMessageBox.information(self, "Éxito", "Sesión completada correctamente.")
+            self._load()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    def _on_cancel_session(self, session_id: int):
+        reply = QMessageBox.question(
+            self, "Cancelar Sesión",
+            "¿Cancelar esta sesión de conteo? Esta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.service.cancel_count_session(session_id)
+            self._load()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    def _on_view_summary(self, session_id: int):
+        dlg = InventoryCountSummaryDialog(self.db, session_id, parent=self)
+        dlg.exec()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# _NewCountSessionForm  –  Formulario interno para crear una sesión nueva
+# ═══════════════════════════════════════════════════════════════════════════
+class _NewCountSessionForm(QDialog):
+    """Formulario compacto para programar una nueva sesión de conteo."""
+
+    def __init__(self, db: Session, branch_id: int, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.branch_id = branch_id
+        self.service = InventoryService(db)
+        self.setWindowTitle("Nueva Sesión de Conteo")
+        self.setMinimumWidth(380)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setContentsMargins(12, 12, 12, 12)
+
+        self.scheduled_dt = QDateTimeEdit(QDateTime.currentDateTime())
+        self.scheduled_dt.setCalendarPopup(True)
+        self.scheduled_dt.setDisplayFormat("dd/MM/yyyy HH:mm")
+        form.addRow("Fecha programada:", self.scheduled_dt)
+
+        self.notes = QTextEdit()
+        self.notes.setPlaceholderText("Notas o instrucciones para el conteo (opcional)...")
+        self.notes.setMaximumHeight(80)
+        form.addRow("Notas:", self.notes)
+
+        layout.addLayout(form)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self._on_accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _on_accept(self):
+        try:
+            from datetime import datetime as _dt
+            qdt = self.scheduled_dt.dateTime()
+            scheduled = _dt(
+                qdt.date().year(), qdt.date().month(), qdt.date().day(),
+                qdt.time().hour(), qdt.time().minute()
+            )
+            self.service.create_count_session(
+                branch_id=self.branch_id,
+                scheduled_date=scheduled,
+                notes=self.notes.toPlainText().strip() or None,
+            )
+            self.accept()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo crear la sesión:\n{e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# InventoryCountExecutionDialog  –  Registrar conteos item a item
+# ═══════════════════════════════════════════════════════════════════════════
+class InventoryCountExecutionDialog(QDialog):
+    """
+    Permite recorrer item a item dentro de una sesión en progreso
+    y registrar el conteo físico de cada uno.
+    """
+
+    def __init__(self, db: Session, session_id: int, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.session_id = session_id
+        self.service = InventoryService(db)
+        self.setWindowTitle(f"Ejecutar Conteo — Sesión #{session_id}")
+        self.setMinimumSize(860, 560)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Progress banner
+        self.progress_lbl = QLabel()
+        self.progress_lbl.setStyleSheet(
+            "font-weight: bold; font-size: 13px; padding: 4px 8px; "
+            "background: #e3f2fd; border-radius: 4px;"
+        )
+        layout.addWidget(self.progress_lbl)
+
+        # Search filter
+        filter_bar = QHBoxLayout()
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Buscar por producto o SKU…")
+        self._search.setMaximumWidth(300)
+        self._search.textChanged.connect(self._filter_table)
+        filter_bar.addWidget(self._search)
+
+        self._only_pending = QCheckBox("Solo pendientes")
+        self._only_pending.setChecked(True)
+        self._only_pending.toggled.connect(self._load)
+        filter_bar.addWidget(self._only_pending)
+        filter_bar.addStretch()
+        layout.addLayout(filter_bar)
+
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels([
+            "inv_id", "Producto / SKU", "Esperado", "Contado", "Diferencia", "Validador", "Acción"
+        ])
+        self.table.setColumnHidden(0, True)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table)
+
+        # Quick-entry row
+        entry_box = QGroupBox("Registrar conteo rápido")
+        entry_form = QHBoxLayout(entry_box)
+
+        entry_form.addWidget(QLabel("Item seleccionado:"))
+        self._selected_lbl = QLabel("(ninguno)")
+        self._selected_lbl.setStyleSheet("font-weight: bold;")
+        entry_form.addWidget(self._selected_lbl)
+
+        entry_form.addWidget(QLabel("Contado:"))
+        self._counted_spin = QSpinBox()
+        self._counted_spin.setRange(0, 999999)
+        self._counted_spin.setFixedWidth(90)
+        entry_form.addWidget(self._counted_spin)
+
+        entry_form.addWidget(QLabel("Validador:"))
+        self._validator_input = QLineEdit()
+        self._validator_input.setPlaceholderText("Nombre (opcional)")
+        self._validator_input.setMaximumWidth(180)
+        entry_form.addWidget(self._validator_input)
+
+        save_btn = QPushButton("Registrar")
+        save_btn.setFixedWidth(100)
+        save_btn.clicked.connect(self._on_record_selected)
+        entry_form.addWidget(save_btn)
+
+        layout.addWidget(entry_box)
+
+        # Connect row selection → populate entry row
+        self.table.selectionModel().selectionChanged.connect(self._on_row_selected)
+
+        close = QPushButton("Cerrar")
+        close.clicked.connect(self.accept)
+        layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+
+        self._all_items = []
+        self._load()
+
+    def _load(self):
+        try:
+            summary = self.service.get_count_session_summary(self.session_id)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+            return
+
+        if not summary:
+            QMessageBox.warning(self, "Error", "No se encontró la sesión.")
+            self.reject()
+            return
+
+        total = summary["total_items"]
+        counted = summary["counted_items"]
+        discrepancies = summary["discrepancy_count"]
+        self.progress_lbl.setText(
+            f"Progreso: {counted}/{total} items contados  |  "
+            f"Discrepancias: {discrepancies}  |  "
+            f"Pendientes: {total - counted}"
+        )
+
+        self._all_items = summary["items"]
+        self._render_table(self._all_items)
+
+    def _render_table(self, items: list):
+        only_pending = self._only_pending.isChecked()
+        if only_pending:
+            items = [i for i in items if i.get("counted_physical") is None]
+
+        self.table.setRowCount(len(items))
+        for row, item in enumerate(items):
+            inv_id = item.get("inventory_id") or 0
+            self.table.setItem(row, 0, QTableWidgetItem(str(inv_id)))
+
+            # Resolve product name via inventory_id
+            prod_name = f"inventory #{inv_id}"
+            try:
+                inv = self.service.get_inventory(inv_id)
+                if inv and inv.get("product"):
+                    p = inv["product"]
+                    prod_name = f"{p.get('sku', '')} — {p.get('name', '')}"
+            except Exception:
+                pass
+            self.table.setItem(row, 1, QTableWidgetItem(prod_name))
+
+            expected = item.get("expected_physical", 0)
+            counted = item.get("counted_physical")
+            diff = item.get("difference")
+
+            self.table.setItem(row, 2, QTableWidgetItem(str(expected)))
+            self.table.setItem(row, 3, QTableWidgetItem(str(counted) if counted is not None else "—"))
+            diff_cell = QTableWidgetItem(str(diff) if diff is not None else "—")
+            if diff is not None and diff != 0:
+                diff_cell.setBackground(QColor("#ffaaaa"))
+            elif diff == 0 and counted is not None:
+                diff_cell.setBackground(QColor("#d4edda"))
+            self.table.setItem(row, 4, diff_cell)
+            self.table.setItem(row, 5, QTableWidgetItem(item.get("validator_name") or ""))
+
+            # Inline action button
+            btn = QPushButton("Contar")
+            btn.setFixedHeight(26)
+            btn.clicked.connect(lambda _, i=item, r=row: self._on_inline_count(i, r))
+            self.table.setCellWidget(row, 6, btn)
+
+        self.table.resizeColumnsToContents()
+
+    def _filter_table(self, text: str):
+        text = text.lower()
+        for row in range(self.table.rowCount()):
+            cell = self.table.item(row, 1)
+            visible = not text or (cell and text in cell.text().lower())
+            self.table.setRowHidden(row, not visible)
+
+    def _on_row_selected(self):
+        rows = self.table.selectionModel().selectedRows()
+        if not rows:
+            self._selected_lbl.setText("(ninguno)")
+            return
+        row = rows[0].row()
+        prod_cell = self.table.item(row, 1)
+        expected_cell = self.table.item(row, 2)
+        self._selected_lbl.setText(prod_cell.text() if prod_cell else "")
+        if expected_cell:
+            try:
+                self._counted_spin.setValue(int(expected_cell.text()))
+            except ValueError:
+                pass
+
+    def _on_inline_count(self, item: dict, _row: int):
+        inv_id = item.get("inventory_id")
+        if not inv_id:
+            QMessageBox.warning(self, "Error", "Este item no tiene inventario asignado.")
+            return
+        from PyQt6.QtWidgets import QInputDialog
+        counted, ok = QInputDialog.getInt(
+            self, "Registrar Conteo",
+            f"Cantidad contada para:\n{self.table.item(_row, 1).text() if self.table.item(_row, 1) else inv_id}",
+            value=item.get("expected_physical", 0), min=0, max=999999,
+        )
+        if not ok:
+            return
+        try:
+            self.service.record_count_item(
+                session_id=self.session_id,
+                inventory_id=inv_id,
+                counted_physical=counted,
+            )
+            self._load()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    def _on_record_selected(self):
+        rows = self.table.selectionModel().selectedRows()
+        if not rows:
+            QMessageBox.information(self, "Info", "Selecciona una fila primero.")
+            return
+        row = rows[0].row()
+        inv_id_cell = self.table.item(row, 0)
+        if not inv_id_cell or not inv_id_cell.text().isdigit():
+            QMessageBox.warning(self, "Error", "No se pudo determinar el item.")
+            return
+        inv_id = int(inv_id_cell.text())
+        counted = self._counted_spin.value()
+        validator = self._validator_input.text().strip() or None
+        try:
+            self.service.record_count_item(
+                session_id=self.session_id,
+                inventory_id=inv_id,
+                counted_physical=counted,
+                validator_name=validator,
+            )
+            self._load()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# InventoryCountSummaryDialog  –  Ver resultado de una sesión completada
+# ═══════════════════════════════════════════════════════════════════════════
+class InventoryCountSummaryDialog(QDialog):
+    """
+    Muestra el resumen detallado de una sesión de conteo completada o cancelada.
+    Incluye estadísticas globales, lista de items y detalle de discrepancias.
+    """
+
+    def __init__(self, db: Session, session_id: int, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.session_id = session_id
+        self.service = InventoryService(db)
+        self.setWindowTitle(f"Resumen de Sesión #{session_id}")
+        self.setMinimumSize(820, 560)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        try:
+            summary = self.service.get_count_session_summary(self.session_id)
+        except Exception as e:
+            layout.addWidget(QLabel(f"Error al cargar sesión: {e}"))
+            close = QPushButton("Cerrar")
+            close.clicked.connect(self.accept)
+            layout.addWidget(close)
+            return
+
+        if not summary:
+            layout.addWidget(QLabel("Sesión no encontrada."))
+            close = QPushButton("Cerrar")
+            close.clicked.connect(self.accept)
+            layout.addWidget(close)
+            return
+
+        session = summary["session"]
+        total = summary["total_items"]
+        counted = summary["counted_items"]
+        pending = summary["pending_items"]
+        discrepancies = summary["discrepancy_count"]
+
+        # ── Encabezado con estadísticas ───────────────────────────────────
+        status = session.get("status", "")
+        STATUS_COLORS = {
+            "pending": "#fff9c4", "in_progress": "#cce5ff",
+            "completed": "#d4edda", "cancelled": "#f8d7da",
+        }
+        header_color = STATUS_COLORS.get(status, "#f5f5f5")
+
+        header_box = QGroupBox("Información de la sesión")
+        header_box.setStyleSheet(f"QGroupBox {{ background: {header_color}; border-radius: 4px; }}")
+        header_form = QFormLayout(header_box)
+        header_form.addRow("Estado:", QLabel(f"<b>{status.replace('_', ' ').upper()}</b>"))
+        header_form.addRow("Programada:", QLabel((session.get("scheduled_date") or "")[:16].replace("T", " ")))
+        header_form.addRow("Iniciada:", QLabel((session.get("started_at") or "—")[:16].replace("T", " ")))
+        header_form.addRow("Completada:", QLabel((session.get("completed_at") or "—")[:16].replace("T", " ")))
+        header_form.addRow("Validadores:", QLabel(str(session.get("validator_count", 1))))
+        if session.get("notes"):
+            header_form.addRow("Notas:", QLabel(session["notes"]))
+        layout.addWidget(header_box)
+
+        # ── Métricas rápidas ──────────────────────────────────────────────
+        metrics_bar = QHBoxLayout()
+        for label, value, color in [
+            ("Total items", str(total), "#1565c0"),
+            ("Contados", str(counted), "#2e7d32"),
+            ("Pendientes", str(pending), "#f57c00"),
+            ("Discrepancias", str(discrepancies), "#c62828"),
+        ]:
+            box = QGroupBox(label)
+            box_lay = QVBoxLayout(box)
+            val_lbl = QLabel(value)
+            val_lbl.setStyleSheet(f"font-size: 22px; font-weight: bold; color: {color};")
+            val_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            box_lay.addWidget(val_lbl)
+            metrics_bar.addWidget(box)
+        layout.addLayout(metrics_bar)
+
+        # ── Tabs: todos los items / solo discrepancias ────────────────────
+        tabs = QTabWidget()
+        tabs.addTab(self._build_items_table(summary["items"], only_discrepancies=False), "Todos los items")
+        tabs.addTab(self._build_items_table(summary["items"], only_discrepancies=True), f"Discrepancias ({discrepancies})")
+        layout.addWidget(tabs)
+
+        close = QPushButton("Cerrar")
+        close.clicked.connect(self.accept)
+        layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+
+    def _build_items_table(self, items: list, only_discrepancies: bool) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+
+        if only_discrepancies:
+            items = [i for i in items if i.get("is_discrepancy")]
+
+        t = QTableWidget()
+        t.setColumnCount(7)
+        t.setHorizontalHeaderLabels([
+            "Inventario", "Producto", "Esperado", "Contado", "Diferencia", "Validador", "Notas"
+        ])
+        t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        t.horizontalHeader().setStretchLastSection(True)
+        t.setRowCount(len(items))
+
+        for row, item in enumerate(items):
+            inv_id = item.get("inventory_id") or ""
+            t.setItem(row, 0, QTableWidgetItem(str(inv_id)))
+
+            # Resolve product name
+            prod_name = f"inv #{inv_id}"
+            try:
+                inv = self.service.get_inventory(int(inv_id)) if inv_id else None
+                if inv and inv.get("product"):
+                    p = inv["product"]
+                    prod_name = f"{p.get('sku', '')} — {p.get('name', '')}"
+            except Exception:
+                pass
+            t.setItem(row, 1, QTableWidgetItem(prod_name))
+
+            expected = item.get("expected_physical", 0)
+            counted = item.get("counted_physical")
+            diff = item.get("difference")
+
+            t.setItem(row, 2, QTableWidgetItem(str(expected)))
+            t.setItem(row, 3, QTableWidgetItem(str(counted) if counted is not None else "—"))
+
+            diff_cell = QTableWidgetItem(str(diff) if diff is not None else "—")
+            if item.get("is_discrepancy"):
+                diff_cell.setBackground(QColor("#ffaaaa"))
+            elif counted is not None:
+                diff_cell.setBackground(QColor("#d4edda"))
+            t.setItem(row, 4, diff_cell)
+
+            t.setItem(row, 5, QTableWidgetItem(item.get("validator_name") or ""))
+            t.setItem(row, 6, QTableWidgetItem(item.get("notes") or ""))
+
+        t.resizeColumnsToContents()
+        lay.addWidget(t)
+        return w

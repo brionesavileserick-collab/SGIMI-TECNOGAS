@@ -95,6 +95,17 @@ class Settings:
         STOCK_IN_TRANSIT_ADDED = "inventory.in_transit_added"
         STOCK_IN_TRANSIT_RECEIVED = "inventory.in_transit_received"
 
+        # Count session workflow events
+        COUNT_SESSION_CREATED = "inventory.count_session_created"
+        COUNT_SESSION_STARTED = "inventory.count_session_started"
+        COUNT_SESSION_COMPLETED = "inventory.count_session_completed"
+        COUNT_ITEM_RECORDED = "inventory.count_item_recorded"
+
+        # Batch events
+        BATCH_ADDED = "inventory.batch_added"
+        BATCH_EXPIRING = "inventory.batch_expiring"
+        BATCH_CONSUMED = "inventory.batch_consumed"
+
         # Transfer events
         TRANSFER_SENT = "transfer.sent"
         TRANSFER_RECEIVED = "transfer.received"
