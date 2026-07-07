@@ -120,7 +120,7 @@ def build_executable(onefile=False, target=None):
         return False
 
     project_root = Path(__file__).resolve().parent
-    dist_dir = project_root / 'dist' / target
+    dist_dir = project_root / 'dist' / f'{APP_NAME}_Distribution_{target}'
     spec_dir = project_root / 'build' / 'spec'
     dist_dir.mkdir(parents=True, exist_ok=True)
     spec_dir.mkdir(parents=True, exist_ok=True)
@@ -205,31 +205,21 @@ def build_executable(onefile=False, target=None):
 
 def create_distribution_package(target=None, onefile=False):
     """
-    Create distribution package with executable, README, and LICENSE.
+    Create distribution package with README, LICENSE, and config template.
+    The executable is already in the distribution directory from the build step.
     """
     target = normalize_target(target)
     project_root = Path(__file__).resolve().parent
     dist_dir = Path(f'dist/{APP_NAME}_Distribution_{target}')
     
     output_name = get_output_name(target)
-    exe_path = Path(f'dist/{target}/{output_name}')
+    exe_path = dist_dir / output_name
 
     if not exe_path.exists():
         print("No executable found. Build first.")
         return False
 
-    print("Creating distribution package...")
-
-    # Create distribution directory
-    if dist_dir.exists():
-        shutil.rmtree(dist_dir)
-    dist_dir.mkdir(parents=True)
-
-    # Copy executable or directory
-    if onefile:
-        shutil.copy2(exe_path, dist_dir / output_name)
-    else:
-        shutil.copytree(exe_path, dist_dir / 'Application')
+    print("Adding distribution files...")
 
     # Copy LICENSE file if exists
     license_file = project_root / 'LICENSE'
