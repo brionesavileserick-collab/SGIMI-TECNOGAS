@@ -11,7 +11,8 @@ from models.product_relation import ProductRelation
 from models.price_history import PriceHistory
 from models.inventory import Inventory
 from models.inventory_history import InventoryHistory
-from models.movement import Movement, MovementType, MovementState
+from models.movement import Movement, MovementType, MovementState, MovementPriority, MovementSource
+from models.movement_state_history import MovementStateHistory
 
 # Re-export Alert and HistoryEntry from their service modules
 # These are defined in service files but we expose them here for convenience
@@ -22,6 +23,7 @@ __all__ = [
     "User", "Branch",
     "Product", "Category", "Supplier", "ProductRelation", "PriceHistory",
     "Inventory", "InventoryHistory",
-    "Movement", "MovementType", "MovementState",
+    "Movement", "MovementType", "MovementState", "MovementPriority", "MovementSource",
+    "MovementStateHistory",
     "Alert", "HistoryEntry",
 ]

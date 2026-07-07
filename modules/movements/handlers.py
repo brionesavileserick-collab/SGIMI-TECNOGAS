@@ -1,5 +1,9 @@
 """
 Movement event handlers - React to events and log movements.
+
+Handlers registrados:
+  Originales : MOVEMENT_CREATED, MOVEMENT_VALIDATED, MOVEMENT_REJECTED, TRANSFER_SENT
+  Nuevos     : MOVEMENT_CANCELLED, MOVEMENT_REVERSED, TRANSFER_REJECTED
 """
 
 from typing import Dict, Any
@@ -23,35 +27,101 @@ class MovementHandlers:
 
     def _register_handlers(self):
         """Register all event handlers."""
-        # Listen for movement events for logging/debugging
+        # Original handlers
         event_bus.subscribe(settings.Events.MOVEMENT_CREATED, self.handle_movement_created)
         event_bus.subscribe(settings.Events.MOVEMENT_VALIDATED, self.handle_movement_validated)
         event_bus.subscribe(settings.Events.MOVEMENT_REJECTED, self.handle_movement_rejected)
         event_bus.subscribe(settings.Events.TRANSFER_SENT, self.handle_transfer_sent)
+        # Exp 1 – Cancelación y reversión
+        event_bus.subscribe(settings.Events.MOVEMENT_CANCELLED, self.handle_movement_cancelled)
+        event_bus.subscribe(settings.Events.MOVEMENT_REVERSED, self.handle_movement_reversed)
+        # Exp 2 – Rechazo de recepción de transferencia
+        event_bus.subscribe(settings.Events.TRANSFER_REJECTED, self.handle_transfer_rejected)
+
+    # ------------------------------------------------------------------
+    # Original handlers
+    # ------------------------------------------------------------------
 
     def handle_movement_created(self, data: Dict[str, Any]):
         """Handle movement.created event."""
-        logger.info(f"Movement created event: {data}")
-        # Additional processing could be added here
-        # Example: Send notifications, update dashboards, etc.
+        logger.info(
+            f"[movement.created] ID={data.get('movement_id')} "
+            f"type={data.get('movement_type')} qty={data.get('quantity')} "
+            f"branch={data.get('branch_id')} priority={data.get('priority')} "
+            f"source={data.get('source')}"
+        )
 
     def handle_movement_validated(self, data: Dict[str, Any]):
         """Handle movement.validated event."""
-        logger.info(f"Movement validated event: {data}")
-        # Inventory module handles the actual stock update
-        # This handler is for movement-specific post-processing
+        logger.info(
+            f"[movement.validated] ID={data.get('movement_id')} "
+            f"type={data.get('movement_type')} qty={data.get('quantity')} "
+            f"branch={data.get('branch_id')} validator={data.get('validator_id')}"
+        )
+        # Inventory module handles actual stock updates via its own handlers.
 
     def handle_movement_rejected(self, data: Dict[str, Any]):
         """Handle movement.rejected event."""
-        logger.info(f"Movement rejected event: {data}")
-        # Example: Send notification to user who created the movement
+        logger.info(
+            f"[movement.rejected] ID={data.get('movement_id')} "
+            f"reason='{data.get('reason')}' validator={data.get('validator_id')}"
+        )
 
     def handle_transfer_sent(self, data: Dict[str, Any]):
         """Handle transfer.sent event."""
-        logger.info(f"Transfer sent event: {data}")
-        # Transfer.received should be emitted by the destination branch
-        # when they confirm receipt, not automatically here.
-        # This handler only logs the event for audit purposes.
+        logger.info(
+            f"[transfer.sent] movement={data.get('movement_id')} "
+            f"product={data.get('product_id')} qty={data.get('quantity')} "
+            f"origin={data.get('origin_branch_id')} "
+            f"destination={data.get('destination_branch_id')}"
+        )
+        # Destination branch confirms receipt via confirm_transfer_reception().
+        # This handler is for audit/logging only.
+
+    # ------------------------------------------------------------------
+    # New handlers – Exp 1
+    # ------------------------------------------------------------------
+
+    def handle_movement_cancelled(self, data: Dict[str, Any]):
+        """Handle movement.cancelled event."""
+        logger.info(
+            f"[movement.cancelled] ID={data.get('movement_id')} "
+            f"type={data.get('movement_type')} qty={data.get('quantity')} "
+            f"by={data.get('cancelled_by')} reason='{data.get('reason')}'"
+        )
+
+    def handle_movement_reversed(self, data: Dict[str, Any]):
+        """Handle movement.reversed event.
+
+        Emitted when a compensatory movement is created to undo a cancelled one.
+        The compensatory movement still requires validation through the normal flow.
+        """
+        logger.info(
+            f"[movement.reversed] original={data.get('original_movement_id')} "
+            f"compensatory={data.get('compensatory_movement_id')} "
+            f"type={data.get('movement_type')} qty={data.get('quantity')} "
+            f"by={data.get('reversed_by')}"
+        )
+
+    # ------------------------------------------------------------------
+    # New handler – Exp 2
+    # ------------------------------------------------------------------
+
+    def handle_transfer_rejected(self, data: Dict[str, Any]):
+        """Handle transfer.rejected event (reception rejected by destination branch)."""
+        logger.warning(
+            f"[transfer.rejected] movement={data.get('movement_id')} "
+            f"product={data.get('product_id')} qty={data.get('quantity')} "
+            f"origin={data.get('origin_branch_id')} "
+            f"destination={data.get('destination_branch_id')} "
+            f"by={data.get('rejected_by')} reason='{data.get('reason')}'"
+        )
+        # Origin branch should be notified to investigate discrepancy.
+        # Alert generation or further compensatory logic can be added here.
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     def unregister_handlers(self):
         """Unregister all event handlers."""
@@ -59,6 +129,9 @@ class MovementHandlers:
         event_bus.unsubscribe(settings.Events.MOVEMENT_VALIDATED, self.handle_movement_validated)
         event_bus.unsubscribe(settings.Events.MOVEMENT_REJECTED, self.handle_movement_rejected)
         event_bus.unsubscribe(settings.Events.TRANSFER_SENT, self.handle_transfer_sent)
+        event_bus.unsubscribe(settings.Events.MOVEMENT_CANCELLED, self.handle_movement_cancelled)
+        event_bus.unsubscribe(settings.Events.MOVEMENT_REVERSED, self.handle_movement_reversed)
+        event_bus.unsubscribe(settings.Events.TRANSFER_REJECTED, self.handle_transfer_rejected)
         logger.info("Movement handlers unregistered")
 
 

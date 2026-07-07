@@ -92,6 +92,11 @@ class Settings:
         # Transfer events
         TRANSFER_SENT = "transfer.sent"
         TRANSFER_RECEIVED = "transfer.received"
+        TRANSFER_REJECTED = "transfer.rejected"
+
+        # Movement cancellation / reversal events
+        MOVEMENT_CANCELLED = "movement.cancelled"
+        MOVEMENT_REVERSED = "movement.reversed"
 
         # Alert events
         ALERT_GENERATED = "alert.generated"
