@@ -13,6 +13,7 @@ from models.inventory import Inventory
 from models.inventory_history import InventoryHistory
 from models.movement import Movement, MovementType, MovementState, MovementPriority, MovementSource
 from models.movement_state_history import MovementStateHistory
+from models.saved_report import SavedReport
 
 # Re-export Alert and HistoryEntry from their service modules
 # These are defined in service files but we expose them here for convenience
@@ -25,5 +26,6 @@ __all__ = [
     "Inventory", "InventoryHistory",
     "Movement", "MovementType", "MovementState", "MovementPriority", "MovementSource",
     "MovementStateHistory",
+    "SavedReport",
     "Alert", "HistoryEntry",
 ]

@@ -52,7 +52,7 @@ def init_db() -> None:
     """Initialize database, creating all tables and running pending migrations."""
     from models import (  # noqa: F401 – side-effects register tables with Base
         product, category, supplier, product_relation, price_history,
-        branch, inventory, inventory_history, movement, user,
+        branch, inventory, inventory_history, movement, user, saved_report,
     )
     Base.metadata.create_all(bind=engine)
     if settings.DATABASE_URL.startswith("sqlite"):
