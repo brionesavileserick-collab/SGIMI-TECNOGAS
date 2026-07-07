@@ -54,6 +54,8 @@ def init_db() -> None:
         product, category, supplier, product_relation, price_history,
         branch, inventory, inventory_history, movement, user, saved_report,
     )
+    # Dashboard widget config model (Exp 9)
+    from models import dashboard_widget_config  # noqa: F401
     Base.metadata.create_all(bind=engine)
     if settings.DATABASE_URL.startswith("sqlite"):
         with engine.begin() as connection:

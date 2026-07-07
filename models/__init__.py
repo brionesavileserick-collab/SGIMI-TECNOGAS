@@ -14,6 +14,7 @@ from models.inventory_history import InventoryHistory
 from models.movement import Movement, MovementType, MovementState, MovementPriority, MovementSource
 from models.movement_state_history import MovementStateHistory
 from models.saved_report import SavedReport
+from models.dashboard_widget_config import DashboardWidgetConfig, WIDGET_KEYS, DEFAULT_POSITIONS
 
 # Re-export Alert and HistoryEntry from their service modules
 # These are defined in service files but we expose them here for convenience
@@ -27,5 +28,6 @@ __all__ = [
     "Movement", "MovementType", "MovementState", "MovementPriority", "MovementSource",
     "MovementStateHistory",
     "SavedReport",
+    "DashboardWidgetConfig", "WIDGET_KEYS", "DEFAULT_POSITIONS",
     "Alert", "HistoryEntry",
 ]
