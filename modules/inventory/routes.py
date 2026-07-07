@@ -1,6 +1,7 @@
 """
 Inventory GUI routes/controllers for PyQt6 interface.
 Expansiones 1-9 integradas en la interfaz gráfica.
+Operation-mode aware: Matrix = all branches visible; Branch = scoped to one branch.
 """
 
 from typing import Dict, Any, Optional, List
@@ -14,12 +15,15 @@ from PyQt6.QtWidgets import (
     QCheckBox, QHeaderView, QFrame, QDialogButtonBox,
     QSizePolicy, QScrollArea,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QFont
 
 from modules.inventory.service import InventoryService
 from modules.products.service import ProductService
 from modules.branches.service import BranchService
+from core.operation_mode import operation_mode, MODE_MATRIX, MODE_BRANCH
+from core.event_bus import event_bus
+from core.settings import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -679,7 +683,23 @@ class InventoryListView(QWidget):
         self.current_branch_id = None
         self.show_discrepancies_only = False
         self.show_low_stock_only = False
+
+        # Debounce timer: collapses bursts of event-bus notifications into
+        # a single reload 400 ms after the last signal arrives.
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(400)
+        self._refresh_timer.timeout.connect(self._on_refresh_timeout)
+
         self.setup_ui()
+        self.apply_operation_mode(operation_mode.mode, operation_mode.current_branch_id)
+
+        # Subscribe to operation-mode changes
+        operation_mode.subscribe(self._on_mode_changed)
+
+        # Subscribe to relevant event-bus events for real-time refresh
+        self._subscribe_events()
+
         self.load_inventory()
 
     # ── UI setup ─────────────────────────────────────────────────────────
@@ -691,6 +711,11 @@ class InventoryListView(QWidget):
         title = QLabel("Gestión de Inventario")
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
         header.addWidget(title)
+
+        # Mode indicator — updated by apply_operation_mode()
+        self.mode_label = QLabel("")
+        self.mode_label.setStyleSheet("font-size: 12px; font-weight: bold; padding: 4px 8px; border-radius: 4px;")
+        header.addWidget(self.mode_label)
         header.addStretch()
 
         self.branch_combo = QComboBox()
@@ -731,6 +756,7 @@ class InventoryListView(QWidget):
         self.count_button.clicked.connect(self.on_count_inventory)
         actions.addWidget(self.count_button)
 
+        # Global-view toggle — only shown in matrix mode
         self.global_view_btn = QPushButton("🌐 Vista Global")
         self.global_view_btn.setCheckable(True)
         self.global_view_btn.clicked.connect(self.toggle_global_view)
@@ -776,13 +802,128 @@ class InventoryListView(QWidget):
             summary_row.addWidget(lbl)
         layout.addWidget(summary_box)
 
+    # ── Operation-mode integration ───────────────────────────────────────
+    def apply_operation_mode(self, mode: str, branch_id):
+        """Apply visual and data-scope changes for the current operation mode.
+
+        Called on init and every time operation_mode changes.
+        """
+        if mode == MODE_BRANCH and branch_id:
+            # Lock the branch selector to the active branch
+            self.branch_combo.setEnabled(False)
+            idx = self.branch_combo.findData(branch_id)
+            if idx >= 0:
+                self.branch_combo.blockSignals(True)
+                self.branch_combo.setCurrentIndex(idx)
+                self.branch_combo.blockSignals(False)
+            self.current_branch_id = branch_id
+
+            # Branch mode: hide global-view toggle (not meaningful for a single branch)
+            self.global_view_btn.setVisible(False)
+            if self.global_view_btn.isChecked():
+                self.global_view_btn.setChecked(False)
+
+            self.mode_label.setText(f"🏢 Sucursal: {operation_mode.current_branch_name}")
+            self.mode_label.setStyleSheet(
+                "font-size: 12px; font-weight: bold; padding: 4px 8px; "
+                "border-radius: 4px; background: #e3f2fd; color: #0d47a1;"
+            )
+        else:
+            # Matrix mode: unlock branch selector, show global-view toggle
+            self.branch_combo.setEnabled(True)
+            self.global_view_btn.setVisible(True)
+
+            self.mode_label.setText("🌐 Modo: Matriz")
+            self.mode_label.setStyleSheet(
+                "font-size: 12px; font-weight: bold; padding: 4px 8px; "
+                "border-radius: 4px; background: #e8f5e9; color: #1b5e20;"
+            )
+
+    def _on_mode_changed(self, mode: str, branch_id):
+        """Callback from operation_mode singleton — runs on mode switch."""
+        self.apply_operation_mode(mode, branch_id)
+        # Reset manual filters so the new scope is applied cleanly
+        self.show_discrepancies_only = False
+        self.show_low_stock_only = False
+        self.discrepancy_btn.setChecked(False)
+        self.low_stock_btn.setChecked(False)
+        self.search_input.clear()
+        self.load_data()
+
+    # ── Event-bus subscriptions for real-time refresh (Task 5) ───────────
+    def _subscribe_events(self):
+        """Subscribe to inventory and movement events that affect stock display."""
+        for event in (
+            settings.Events.INVENTORY_UPDATED,
+            settings.Events.INVENTORY_COUNTED,
+            settings.Events.MOVEMENT_VALIDATED,
+            settings.Events.TRANSFER_SENT,
+            settings.Events.TRANSFER_RECEIVED,
+            settings.Events.STOCK_IN_TRANSIT_ADDED,
+            settings.Events.STOCK_IN_TRANSIT_RECEIVED,
+        ):
+            event_bus.subscribe(event, self._on_stock_event)
+
+    def _unsubscribe_events(self):
+        """Clean up all event subscriptions."""
+        for event in (
+            settings.Events.INVENTORY_UPDATED,
+            settings.Events.INVENTORY_COUNTED,
+            settings.Events.MOVEMENT_VALIDATED,
+            settings.Events.TRANSFER_SENT,
+            settings.Events.TRANSFER_RECEIVED,
+            settings.Events.STOCK_IN_TRANSIT_ADDED,
+            settings.Events.STOCK_IN_TRANSIT_RECEIVED,
+        ):
+            event_bus.unsubscribe(event, self._on_stock_event)
+
+    def _on_stock_event(self, data):
+        """Event-bus callback: schedule a debounced table refresh.
+
+        In branch mode, only reload when the event concerns the active branch.
+        In matrix mode, always reload.
+        """
+        if operation_mode.is_branch and operation_mode.current_branch_id:
+            event_branch = data.get("branch_id") or data.get("destination_branch_id")
+            if event_branch not in (
+                operation_mode.current_branch_id,
+                None,  # events without branch_id always trigger reload
+            ):
+                return  # event is for a different branch — ignore
+        self._refresh_timer.start()  # restart debounce window
+
+    def _on_refresh_timeout(self):
+        """Actually reload data after the debounce window expires."""
+        if not self.global_view_btn.isChecked():
+            self.load_inventory(self.search_input.text() or None)
+        else:
+            self.load_global_inventory(self.search_input.text() or None)
+
+    def closeEvent(self, event):
+        """Clean up when the widget is destroyed."""
+        operation_mode.unsubscribe(self._on_mode_changed)
+        self._unsubscribe_events()
+        super().closeEvent(event)
+
     # ── Carga y renderizado de datos ──────────────────────────────────────
     def load_inventory(self, search: str = None):
-        """Carga el inventario en la tabla con todos los campos nuevos."""
+        """Carga el inventario en la tabla con todos los campos nuevos.
+
+        In branch mode the scope is always the active branch, regardless of
+        what the branch combo shows.  In matrix mode the user controls the
+        combo freely.
+        """
+        # Determine effective branch: operation mode overrides the combo in
+        # branch mode so all data queries are scoped correctly.
+        effective_branch_id = (
+            operation_mode.current_branch_id
+            if operation_mode.is_branch
+            else self.current_branch_id
+        )
         try:
             result = self.service.list_inventory(
                 page=1, page_size=200,
-                branch_id=self.current_branch_id,
+                branch_id=effective_branch_id,
                 low_stock_only=self.show_low_stock_only,
                 discrepancy_only=self.show_discrepancies_only,
                 search=search,
@@ -871,13 +1012,18 @@ class InventoryListView(QWidget):
         return w
 
     def update_summary(self):
-        totals = self.service.get_totals(self.current_branch_id)
+        effective_branch_id = (
+            operation_mode.current_branch_id
+            if operation_mode.is_branch
+            else self.current_branch_id
+        )
+        totals = self.service.get_totals(effective_branch_id)
         self.total_physical_label.setText(f"Físico Total: {totals['total_physical_stock']}")
         self.total_digital_label.setText(f"Digital Total: {totals['total_digital_stock']}")
         self.discrepancy_label.setText(f"Discrepancias: {totals['discrepancy_count']}")
         self.low_stock_label.setText(f"Stock Bajo: {totals['low_stock_count']}")
         try:
-            val = self.service.get_inventory_value(self.current_branch_id)
+            val = self.service.get_inventory_value(effective_branch_id)
             self.value_label.setText(f"Valor: ${val['total_value']:,.2f}")
         except Exception:
             self.value_label.setText("Valor: N/D")
@@ -918,7 +1064,11 @@ class InventoryListView(QWidget):
     # ── Acciones del toolbar ──────────────────────────────────────────────
     def on_count_inventory(self):
         """Registrar conteo rápido (retrocompatible)."""
-        dialog = InventoryCountDialog(self.db, self)
+        # Pre-populate branch when in branch mode
+        pre_data = {}
+        if operation_mode.is_branch and operation_mode.current_branch_id:
+            pre_data["branch_id"] = operation_mode.current_branch_id
+        dialog = InventoryCountDialog(self.db, self, inventory_data=pre_data)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             try:
                 data = dialog.get_data()
@@ -935,25 +1085,41 @@ class InventoryListView(QWidget):
 
     def show_metrics(self):
         """Abrir diálogo de métricas (Expansión 9)."""
-        branch_id = self.current_branch_id
-        branch_name = self.branch_combo.currentText()
-        dialog = InventoryMetricsDialog(self.db, branch_id, branch_name, parent=self)
+        effective_branch_id = (
+            operation_mode.current_branch_id
+            if operation_mode.is_branch
+            else self.current_branch_id
+        )
+        branch_name = (
+            operation_mode.current_branch_name
+            if operation_mode.is_branch
+            else self.branch_combo.currentText()
+        )
+        dialog = InventoryMetricsDialog(self.db, effective_branch_id, branch_name, parent=self)
         dialog.exec()
 
     def show_reorder_report(self):
         """Mostrar reporte de reposición ordenado por prioridad (Expansión 4)."""
-        branch_id = self.current_branch_id
-        if not branch_id:
+        effective_branch_id = (
+            operation_mode.current_branch_id
+            if operation_mode.is_branch
+            else self.current_branch_id
+        )
+        if not effective_branch_id:
             QMessageBox.information(self, "Info", "Selecciona una sucursal para ver el reporte de reposición.")
             return
         try:
-            report = self.service.get_reorder_report(branch_id)
+            report = self.service.get_reorder_report(effective_branch_id)
             total = report["total"]
             if total == 0:
                 QMessageBox.information(self, "Reposición", "No hay items con stock bajo en esta sucursal.")
                 return
-            # Reutilizar el diálogo de métricas abierto en la pestaña de reposición
-            dialog = InventoryMetricsDialog(self.db, branch_id, self.branch_combo.currentText(), parent=self)
+            branch_name = (
+                operation_mode.current_branch_name
+                if operation_mode.is_branch
+                else self.branch_combo.currentText()
+            )
+            dialog = InventoryMetricsDialog(self.db, effective_branch_id, branch_name, parent=self)
             dialog.exec()
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))

@@ -10,6 +10,11 @@ Expansiones incluidas en la GUI:
   Exp 6 - Costo unitario visible en detalles
   Exp 7 - Botón Ver Historial de Estados
   Exp 8 - Botón Confirmar Recepción Física en movimientos validados
+
+Operation-mode aware:
+  Matrix mode — shows movements across all branches; branch filter is free.
+  Branch mode  — scoped to the active branch; branch combo is locked and
+                 "Nuevo Movimiento" / "Traslado Directo" pre-select that branch.
 """
 
 from typing import Optional
@@ -21,11 +26,14 @@ from PyQt6.QtWidgets import (
     QTextEdit, QGroupBox, QDateEdit, QInputDialog, QDoubleSpinBox,
     QTabWidget, QScrollArea, QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QDate
+from PyQt6.QtCore import Qt, pyqtSignal, QDate, QTimer
 from PyQt6.QtGui import QColor
 from modules.movements.service import MovementService
 from modules.products.service import ProductService
 from modules.branches.service import BranchService
+from core.operation_mode import operation_mode, MODE_BRANCH, MODE_MATRIX
+from core.event_bus import event_bus
+from core.settings import settings
 from config import MOVEMENT_TYPES, MOVEMENT_STATES
 import logging
 
@@ -97,11 +105,16 @@ class MovementDialog(QDialog):
             self.product_combo.addItem(f"{p['sku']} - {p['name']}", p['id'])
         layout.addRow("Producto*:", self.product_combo)
 
-        # Sucursal origen
+        # Sucursal origen — locked to active branch in branch mode
         self.branch_combo = QComboBox()
         branches = self.branch_service.get_all_active_branches()
         for b in branches:
             self.branch_combo.addItem(b['name'], b['id'])
+        if operation_mode.is_branch and operation_mode.current_branch_id:
+            idx = self.branch_combo.findData(operation_mode.current_branch_id)
+            if idx >= 0:
+                self.branch_combo.setCurrentIndex(idx)
+            self.branch_combo.setEnabled(False)
         layout.addRow("Sucursal Origen*:", self.branch_combo)
 
         # Sucursal destino (transferencias)
@@ -224,11 +237,17 @@ class DirectTransferDialog(QDialog):
         self.product_combo.currentIndexChanged.connect(self.on_selection_changed)
         layout.addRow("Producto*:", self.product_combo)
 
+        # Sucursal origen — locked to active branch in branch mode
         self.branch_combo = QComboBox()
         branches = self.branch_service.get_all_active_branches()
         for b in branches:
             self.branch_combo.addItem(b['name'], b['id'])
         self.branch_combo.currentIndexChanged.connect(self.on_selection_changed)
+        if operation_mode.is_branch and operation_mode.current_branch_id:
+            idx = self.branch_combo.findData(operation_mode.current_branch_id)
+            if idx >= 0:
+                self.branch_combo.setCurrentIndex(idx)
+            self.branch_combo.setEnabled(False)
         layout.addRow("Sucursal Origen*:", self.branch_combo)
 
         self.dest_branch_combo = QComboBox()
@@ -450,7 +469,22 @@ class MovementListView(QWidget):
         self.current_state = None
         self.current_priority = None      # Exp 3
         self.show_cancelled = False       # Exp 1
+
+        # Debounce timer — collapses rapid event-bus callbacks into one reload
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(400)
+        self._refresh_timer.timeout.connect(self.load_movements)
+
         self.setup_ui()
+        self.apply_operation_mode(operation_mode.mode, operation_mode.current_branch_id)
+
+        # Subscribe to operation-mode changes
+        operation_mode.subscribe(self._on_mode_changed)
+
+        # Subscribe to event-bus for real-time refresh
+        self._subscribe_events()
+
         self.load_movements()
 
     # ------------------------------------------------------------------
@@ -465,6 +499,13 @@ class MovementListView(QWidget):
         title = QLabel("Gestión de Movimientos")
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
         header_layout.addWidget(title)
+
+        # Mode indicator — updated by apply_operation_mode()
+        self.mode_label = QLabel("")
+        self.mode_label.setStyleSheet(
+            "font-size: 12px; font-weight: bold; padding: 4px 8px; border-radius: 4px;"
+        )
+        header_layout.addWidget(self.mode_label)
         header_layout.addStretch()
 
         self.add_button = QPushButton("Nuevo Movimiento")
@@ -489,7 +530,7 @@ class MovementListView(QWidget):
 
         layout.addLayout(header_layout)
 
-        # Filters row 1
+        # Filters row
         filter_layout = QHBoxLayout()
 
         self.branch_combo = QComboBox()
@@ -543,6 +584,7 @@ class MovementListView(QWidget):
         ])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
         self.table.setColumnHidden(0, True)
         self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table)
@@ -554,22 +596,137 @@ class MovementListView(QWidget):
     # ------------------------------------------------------------------
 
     def load_movements(self):
-        result = self.service.list_movements(
-            page=1,
-            page_size=200,
-            branch_id=self.current_branch_id,
-            movement_type=self.current_type,
-            state=self.current_state,
-            priority=self.current_priority,
-            include_cancelled=self.show_cancelled,
+        """Load movements scoped by operation mode."""
+        # Branch mode always scopes to the active branch regardless of combo
+        effective_branch_id = (
+            operation_mode.current_branch_id
+            if operation_mode.is_branch
+            else self.current_branch_id
         )
+        try:
+            result = self.service.list_movements(
+                page=1,
+                page_size=200,
+                branch_id=effective_branch_id,
+                movement_type=self.current_type,
+                state=self.current_state,
+                priority=self.current_priority,
+                include_cancelled=self.show_cancelled,
+            )
+        except Exception as e:
+            logger.exception("Error loading movements")
+            QMessageBox.critical(self, "Error", f"No se pudieron cargar los movimientos:\n{e}")
+            return
+
         movements = result["movements"]
         self.table.setRowCount(len(movements))
-
         for row, mv in enumerate(movements):
             self._fill_row(row, mv)
-
         self.table.resizeColumnsToContents()
+
+    # ------------------------------------------------------------------
+    # Operation-mode integration
+    # ------------------------------------------------------------------
+
+    def apply_operation_mode(self, mode: str, branch_id):
+        """Lock/unlock the branch filter according to the current operation mode."""
+        if mode == MODE_BRANCH and branch_id:
+            # Lock branch filter to the active branch
+            self.branch_combo.setEnabled(False)
+            idx = self.branch_combo.findData(branch_id)
+            if idx >= 0:
+                self.branch_combo.blockSignals(True)
+                self.branch_combo.setCurrentIndex(idx)
+                self.branch_combo.blockSignals(False)
+            self.current_branch_id = branch_id
+
+            self.mode_label.setText(f"🏢 Sucursal: {operation_mode.current_branch_name}")
+            self.mode_label.setStyleSheet(
+                "font-size: 12px; font-weight: bold; padding: 4px 8px; "
+                "border-radius: 4px; background: #e3f2fd; color: #0d47a1;"
+            )
+        else:
+            # Matrix mode — free branch filter
+            self.branch_combo.setEnabled(True)
+            self.mode_label.setText("🌐 Modo: Matriz")
+            self.mode_label.setStyleSheet(
+                "font-size: 12px; font-weight: bold; padding: 4px 8px; "
+                "border-radius: 4px; background: #e8f5e9; color: #1b5e20;"
+            )
+
+    def _on_mode_changed(self, mode: str, branch_id):
+        """Callback from operation_mode singleton — fires on every mode switch."""
+        self.apply_operation_mode(mode, branch_id)
+        # Reset manual filters so new scope is applied cleanly
+        self.type_combo.blockSignals(True)
+        self.type_combo.setCurrentIndex(0)
+        self.type_combo.blockSignals(False)
+        self.state_combo.blockSignals(True)
+        self.state_combo.setCurrentIndex(0)
+        self.state_combo.blockSignals(False)
+        self.current_type = None
+        self.current_state = None
+        self.reference_search.clear()
+        self.load_movements()
+
+    # ------------------------------------------------------------------
+    # Event-bus subscriptions for real-time refresh (Task 5)
+    # ------------------------------------------------------------------
+
+    def _subscribe_events(self):
+        """Subscribe to movement and transfer events for live updates."""
+        for ev in (
+            settings.Events.MOVEMENT_CREATED,
+            settings.Events.MOVEMENT_VALIDATED,
+            settings.Events.MOVEMENT_REJECTED,
+            settings.Events.MOVEMENT_CANCELLED,
+            settings.Events.MOVEMENT_REVERSED,
+            settings.Events.TRANSFER_SENT,
+            settings.Events.TRANSFER_RECEIVED,
+            settings.Events.TRANSFER_REJECTED,
+        ):
+            event_bus.subscribe(ev, self._on_movement_event)
+
+    def _unsubscribe_events(self):
+        """Clean up all event-bus subscriptions."""
+        for ev in (
+            settings.Events.MOVEMENT_CREATED,
+            settings.Events.MOVEMENT_VALIDATED,
+            settings.Events.MOVEMENT_REJECTED,
+            settings.Events.MOVEMENT_CANCELLED,
+            settings.Events.MOVEMENT_REVERSED,
+            settings.Events.TRANSFER_SENT,
+            settings.Events.TRANSFER_RECEIVED,
+            settings.Events.TRANSFER_REJECTED,
+        ):
+            event_bus.unsubscribe(ev, self._on_movement_event)
+
+    def _on_movement_event(self, data):
+        """Event-bus callback: schedule a debounced reload.
+
+        In branch mode only reload when the event involves the active branch
+        (either as origin or destination). In matrix mode always reload.
+        """
+        if operation_mode.is_branch and operation_mode.current_branch_id:
+            bid = operation_mode.current_branch_id
+            event_branches = {
+                data.get("branch_id"),
+                data.get("origin_branch_id"),
+                data.get("destination_branch_id"),
+            }
+            if bid not in event_branches and None not in event_branches:
+                return  # event does not concern this branch
+        self._refresh_timer.start()  # restart debounce window
+
+    def load_data(self):
+        """Generic refresh alias used by MainWindow.refresh_current_view()."""
+        self.load_movements()
+
+    def closeEvent(self, event):
+        """Unsubscribe cleanly on widget close."""
+        operation_mode.unsubscribe(self._on_mode_changed)
+        self._unsubscribe_events()
+        super().closeEvent(event)
 
     def _fill_row(self, row: int, mv: dict):
         """Populate a single table row from a movement dict."""
@@ -706,7 +863,9 @@ class MovementListView(QWidget):
     # ------------------------------------------------------------------
 
     def on_filter_changed(self):
-        self.current_branch_id = self.branch_combo.currentData()
+        # In branch mode the branch combo is locked — don't override the scoped branch_id
+        if not operation_mode.is_branch:
+            self.current_branch_id = self.branch_combo.currentData()
         self.current_type = self.type_combo.currentData()
         self.current_state = self.state_combo.currentData()
         self.current_priority = self.priority_filter_combo.currentData()

@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QMessageBox, QStackedWidget,
     QMenuBar, QMenu, QToolBar, QStatusBar, QDialog, QFormLayout,
-    QTabWidget, QFrame, QSizePolicy
+    QTabWidget, QFrame, QSizePolicy, QComboBox
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction, QIcon, QFont
@@ -21,6 +21,7 @@ from config import setup_logging, APP_TITLE, APP_VERSION
 from core.database import init_db, SessionLocal
 from core.event_bus import event_bus
 from core.settings import settings
+from core.operation_mode import operation_mode, MODE_MATRIX, MODE_BRANCH
 from utils.validators import validate_email, validate_name, validate_password
 
 # Module handlers
@@ -395,14 +396,19 @@ class MainWindow(QMainWindow):
         # Create menu bar
         self.create_menubar()
 
-        # Create toolbar
+        # Create toolbar (includes mode selector)
         self.create_toolbar()
 
-        # Create status bar
-        self.statusBar().showMessage(f"Usuario: {self.user.name}")
+        # Status bar — shows user + current operation mode
+        self.statusBar().showMessage(
+            f"Usuario: {self.user.name}  |  {operation_mode.label()}"
+        )
 
         # Load views
         self.load_views()
+
+        # Subscribe to operation-mode changes to update status bar
+        operation_mode.subscribe(self._on_mode_changed)
 
     def create_sidebar(self):
         """Create sidebar navigation."""
@@ -506,6 +512,20 @@ class MainWindow(QMainWindow):
         refresh_action.triggered.connect(self.refresh_current_view)
         view_menu.addAction(refresh_action)
 
+        # Operation mode submenu
+        mode_menu = menubar.addMenu("Modo de Operación")
+
+        matrix_action = QAction("🌐  Modo Matriz (vista global)", self)
+        matrix_action.setShortcut("Ctrl+M")
+        matrix_action.triggered.connect(self._set_matrix_mode)
+        mode_menu.addAction(matrix_action)
+
+        mode_menu.addSeparator()
+
+        self._branch_mode_actions = []
+        # Branch actions are populated dynamically in load_views() once BranchService is ready
+        self._mode_menu_ref = mode_menu
+
         # Help menu
         help_menu = menubar.addMenu("Ayuda")
 
@@ -514,28 +534,57 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def create_toolbar(self):
-        """Create toolbar."""
+        """Create toolbar with alerts indicator, mode selector, and refresh."""
         toolbar = QToolBar()
         toolbar.setMovable(False)
+        toolbar.setStyleSheet("QToolBar { spacing: 6px; padding: 2px 6px; }")
         self.addToolBar(toolbar)
 
-        # Alerts indicator
+        # ── Alerts indicator ────────────────────────────────────────────
         self.alerts_label = QLabel("Alertas: 0")
-        self.alerts_label.setStyleSheet("padding: 5px;")
+        self.alerts_label.setStyleSheet("padding: 4px 6px;")
         toolbar.addWidget(self.alerts_label)
 
         toolbar.addSeparator()
 
-        # Refresh button
-        refresh_action = QAction("Actualizar", self)
+        # ── Operation-mode selector ──────────────────────────────────────
+        toolbar.addWidget(QLabel("Modo:"))
+
+        self.mode_combo = QComboBox()
+        self.mode_combo.setMinimumWidth(240)
+        self.mode_combo.setToolTip(
+            "Modo Matriz: visibilidad completa de todas las sucursales.\n"
+            "Modo Sucursal: vista y acciones restringidas a una sucursal."
+        )
+        # First item is always Matrix
+        self.mode_combo.addItem("🌐  Matriz (todas las sucursales)", None)
+        # Branch items are added in load_views() once BranchService is available
+        toolbar.addWidget(self.mode_combo)
+
+        apply_mode_btn = QPushButton("Aplicar")
+        apply_mode_btn.setToolTip("Activar el modo seleccionado")
+        apply_mode_btn.clicked.connect(self._on_apply_mode)
+        toolbar.addWidget(apply_mode_btn)
+
+        # Current mode indicator label (read-only)
+        self.mode_status_label = QLabel(operation_mode.label())
+        self.mode_status_label.setStyleSheet(
+            "font-weight: bold; padding: 4px 10px; border-radius: 4px; "
+            "background: #e8f5e9; color: #1b5e20;"
+        )
+        toolbar.addWidget(self.mode_status_label)
+
+        toolbar.addSeparator()
+
+        # ── Refresh ──────────────────────────────────────────────────────
+        refresh_action = QAction("↺  Actualizar", self)
         refresh_action.triggered.connect(self.refresh_current_view)
         toolbar.addAction(refresh_action)
 
-        # Update alerts count
         self.update_alerts_count()
 
     def load_views(self):
-        """Load all module views."""
+        """Load all module views and populate the mode-selector branch list."""
         # Dashboard
         self.dashboard_view = DashboardWidget(self.db)
         self.content_stack.addWidget(self.dashboard_view)
@@ -572,6 +621,9 @@ class MainWindow(QMainWindow):
         self.users_view = UserListView(self.db)
         self.content_stack.addWidget(self.users_view)
 
+        # ── Populate mode combo + menu with active branches ───────────
+        self._populate_branch_mode_options()
+
     def setup_handlers(self):
         """Setup all event handlers."""
         # Initialize handlers from each module
@@ -605,7 +657,7 @@ class MainWindow(QMainWindow):
             self.content_stack.setCurrentIndex(view_index[view_name])
 
     def refresh_current_view(self):
-        """Refresh current view."""
+        """Refresh current view — all views implement load_data()."""
         current_widget = self.content_stack.currentWidget()
         if hasattr(current_widget, 'load_data'):
             current_widget.load_data()
@@ -621,7 +673,103 @@ class MainWindow(QMainWindow):
             current_widget.load_users()
 
         self.update_alerts_count()
-        self.statusBar().showMessage("Vista actualizada", 2000)
+        self.statusBar().showMessage(
+            f"Usuario: {self.user.name}  |  {operation_mode.label()}  |  Vista actualizada",
+            3000,
+        )
+
+    # ── Operation-mode helpers ────────────────────────────────────────────
+
+    def _populate_branch_mode_options(self):
+        """Fill the toolbar combo and menu with the current active branches."""
+        try:
+            service = BranchService(self.db)
+            branches = service.get_all_active_branches()
+        except Exception as e:
+            logger.warning(f"Could not load branches for mode selector: {e}")
+            branches = []
+
+        # Toolbar combo — keep item 0 (Matrix), replace the rest
+        while self.mode_combo.count() > 1:
+            self.mode_combo.removeItem(1)
+        for b in branches:
+            self.mode_combo.addItem(f"🏢  {b['name']}", b['id'])
+
+        # Menu — clear old branch actions and re-add
+        for act in getattr(self, '_branch_mode_actions', []):
+            self._mode_menu_ref.removeAction(act)
+        self._branch_mode_actions = []
+        for b in branches:
+            act = QAction(f"🏢  {b['name']}", self)
+            bid, bname = b['id'], b['name']
+            act.triggered.connect(
+                lambda checked=False, i=bid, n=bname: self._set_branch_mode(i, n)
+            )
+            self._mode_menu_ref.addAction(act)
+            self._branch_mode_actions.append(act)
+
+    def _on_apply_mode(self):
+        """Apply the mode currently selected in the toolbar combo."""
+        branch_id = self.mode_combo.currentData()
+        branch_name = self.mode_combo.currentText().replace("🏢  ", "").strip()
+        if branch_id is None:
+            self._set_matrix_mode()
+        else:
+            self._set_branch_mode(branch_id, branch_name)
+
+    def _set_matrix_mode(self):
+        """Switch to matrix (global) mode."""
+        operation_mode.set_matrix_mode()
+        # Sync combo selection back to Matrix (index 0)
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setCurrentIndex(0)
+        self.mode_combo.blockSignals(False)
+
+    def _set_branch_mode(self, branch_id: int, branch_name: str):
+        """Switch to branch mode for the given branch."""
+        try:
+            operation_mode.set_branch_mode(branch_id, branch_name)
+            # Sync combo to the selected branch
+            idx = self.mode_combo.findData(branch_id)
+            if idx >= 0:
+                self.mode_combo.blockSignals(True)
+                self.mode_combo.setCurrentIndex(idx)
+                self.mode_combo.blockSignals(False)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo cambiar el modo: {e}")
+
+    def _on_mode_changed(self, mode: str, branch_id):
+        """Callback fired by operation_mode singleton on every mode change.
+
+        Updates the toolbar indicator label and the window status bar.
+        Refreshes the inventory and movements views immediately.
+        """
+        label = operation_mode.label()
+
+        # Update toolbar indicator
+        self.mode_status_label.setText(label)
+        if mode == "branch":
+            self.mode_status_label.setStyleSheet(
+                "font-weight: bold; padding: 4px 10px; border-radius: 4px; "
+                "background: #e3f2fd; color: #0d47a1;"
+            )
+        else:
+            self.mode_status_label.setStyleSheet(
+                "font-weight: bold; padding: 4px 10px; border-radius: 4px; "
+                "background: #e8f5e9; color: #1b5e20;"
+            )
+
+        # Update status bar
+        self.statusBar().showMessage(
+            f"Usuario: {self.user.name}  |  {label}"
+        )
+
+        logger.info(f"Operation mode changed: {label}")
+
+    def closeEvent(self, event):
+        """Clean up operation-mode subscription on window close."""
+        operation_mode.unsubscribe(self._on_mode_changed)
+        super().closeEvent(event)
 
     def update_alerts_count(self):
         """Update alerts count in toolbar."""
