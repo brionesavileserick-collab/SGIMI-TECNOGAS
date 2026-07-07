@@ -129,6 +129,108 @@ def _sparkline(data: List[Dict[str, Any]], key: str = "count") -> str:
     mx = max(values)
     return "".join(bars[min(int(v / mx * 8), 8)] for v in values)
 
+
+# ---------------------------------------------------------------------------
+# Exp 10 – Matplotlib chart renderer (module-level helper)
+# ---------------------------------------------------------------------------
+
+def _render_chart_to_label(
+    label: "QLabel",
+    dates: List[str],
+    values: List[float],
+    title: str,
+    color: str = "#2196F3",
+    ylabel: str = "",
+    width_px: int = 460,
+    height_px: int = 200,
+) -> None:
+    """
+    Render a bar chart with matplotlib (Agg backend, no Qt event loop needed),
+    convert the result to a QPixmap, and display it inside *label*.
+
+    Falls back silently to a plain text sparkline if matplotlib is not
+    available or rendering fails.
+    """
+    try:
+        import matplotlib
+        # Force Agg only if no backend has been set yet (safe to call multiple times)
+        if matplotlib.get_backend().lower() not in ("agg",):
+            try:
+                matplotlib.use("Agg")
+            except Exception:
+                pass
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        import io
+        from PyQt6.QtGui import QPixmap
+
+        dpi = 96
+        fig_w = width_px / dpi
+        fig_h = height_px / dpi
+
+        fig = Figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor="#263238")
+        canvas = FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111)
+
+        # Shorten date labels to MM-DD
+        short_dates = [d[-5:] for d in dates]
+        x = range(len(values))
+
+        # Bar chart for movements, line+fill for stock
+        if ylabel.lower().startswith("unidad"):
+            ax.plot(list(x), values, color=color, linewidth=2, marker="o", markersize=4)
+            ax.fill_between(list(x), values, alpha=0.25, color=color)
+        else:
+            bars = ax.bar(list(x), values, color=color, width=0.6)
+            # Value labels on bars (skip if too many points)
+            if len(values) <= 14:
+                for bar, val in zip(bars, values):
+                    if val > 0:
+                        ax.text(
+                            bar.get_x() + bar.get_width() / 2,
+                            bar.get_height() + max(values) * 0.02,
+                            str(int(val)),
+                            ha="center", va="bottom",
+                            color="white", fontsize=7,
+                        )
+
+        # Styling — dark theme to match the app
+        ax.set_facecolor("#37474F")
+        ax.set_title(title, color="white", fontsize=9, pad=4)
+        ax.set_ylabel(ylabel, color="#B0BEC5", fontsize=8)
+        ax.tick_params(colors="#B0BEC5", labelsize=7)
+        ax.set_xticks(list(x))
+        ax.set_xticklabels(short_dates, rotation=45, ha="right", fontsize=7)
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#546E7A")
+        ax.yaxis.grid(True, color="#546E7A", linestyle="--", linewidth=0.5, alpha=0.7)
+        ax.set_axisbelow(True)
+
+        fig.tight_layout(pad=0.4)
+
+        # Render to PNG bytes in memory
+        buf = io.BytesIO()
+        canvas.print_png(buf)
+        buf.seek(0)
+        png_bytes = buf.read()
+
+        # Load into QPixmap
+        pixmap = QPixmap()
+        pixmap.loadFromData(png_bytes, "PNG")
+        label.setPixmap(pixmap)
+        label.setScaledContents(False)
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+
+    except Exception as exc:
+        logger.warning(f"matplotlib chart rendering failed ({exc}); using sparkline")
+        # Plain text fallback
+        bars_txt = " ▁▂▃▄▅▆▇█"
+        mx = max(values) if values and max(values) > 0 else 1
+        spark = "".join(bars_txt[min(int(v / mx * 8), 8)] for v in values)
+        label.setText(f"<b>{title}</b><br><code style='font-size:16px;'>{spark}</code>")
+        label.setTextFormat(Qt.TextFormat.RichText)
+
 # ---------------------------------------------------------------------------
 # Widget Config Dialog  (Exp 9)
 # ---------------------------------------------------------------------------
@@ -894,42 +996,83 @@ class DashboardWidget(QWidget):
             logger.error(f"Error refreshing ranking: {e}")
 
     # ----------------------------------------------------------------
-    # Exp 10 – Charts (text sparklines)
+    # Exp 10 – Charts (matplotlib embedded via PNG → QPixmap)
     # ----------------------------------------------------------------
 
     def _build_charts(self) -> QGroupBox:
-        group = QGroupBox("Tendencias (últimos 7 días)")
-        layout = QVBoxLayout(group)
+        """
+        Build the charts section.  Two QLabels hold the rendered PNG images.
+        A days selector (7 / 14 / 30) sits in the header row.
+        Falls back to a text sparkline when matplotlib is unavailable.
+        """
+        group = QGroupBox("Tendencias")
+        outer = QVBoxLayout(group)
 
-        self._chart_movements_label = QLabel()
-        self._chart_movements_label.setTextFormat(Qt.TextFormat.RichText)
-        self._chart_stock_label     = QLabel()
-        self._chart_stock_label.setTextFormat(Qt.TextFormat.RichText)
+        # Controls row
+        ctrl = QHBoxLayout()
+        ctrl.addWidget(QLabel("Mostrar últimos:"))
+        self._chart_days_combo = QComboBox()
+        for label, val in [("7 días", 7), ("14 días", 14), ("30 días", 30)]:
+            self._chart_days_combo.addItem(label, val)
+        self._chart_days_combo.currentIndexChanged.connect(self._refresh_charts)
+        ctrl.addWidget(self._chart_days_combo)
+        ctrl.addStretch()
+        outer.addLayout(ctrl)
 
-        layout.addWidget(self._chart_movements_label)
-        layout.addWidget(self._chart_stock_label)
+        # Two image labels side by side
+        row = QHBoxLayout()
 
+        mv_frame = QGroupBox("Movimientos por día")
+        mv_layout = QVBoxLayout(mv_frame)
+        self._chart_mv_label = QLabel()
+        self._chart_mv_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._chart_mv_label.setMinimumHeight(200)
+        mv_layout.addWidget(self._chart_mv_label)
+        row.addWidget(mv_frame)
+
+        st_frame = QGroupBox("Stock digital")
+        st_layout = QVBoxLayout(st_frame)
+        self._chart_st_label = QLabel()
+        self._chart_st_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._chart_st_label.setMinimumHeight(200)
+        st_layout.addWidget(self._chart_st_label)
+        row.addWidget(st_frame)
+
+        outer.addLayout(row)
         return group
 
     def _refresh_charts(self) -> None:
+        """Render charts with matplotlib (Agg) → PNG bytes → QPixmap → QLabel."""
+        days = self._chart_days_combo.currentData() or 7
         try:
-            mv_trend = self.service.get_movement_trend(self._branch_id, days=7)
-            st_trend = self.service.get_stock_trend(self._branch_id, days=7)
-
-            mv_spark  = _sparkline(mv_trend, "count")
-            st_spark  = _sparkline(st_trend, "stock")
-
-            dates = "  ".join(d["date"][-5:] for d in mv_trend)
-
-            self._chart_movements_label.setText(
-                f"<b>Movimientos:</b>  <code style='font-size:18px;'>{mv_spark}</code>"
-                f"<br><small>{dates}</small>"
+            mv_data = self.service.get_movement_trend(self._branch_id, days=days)
+            st_data = self.service.get_stock_trend(self._branch_id, days=days)
+            _render_chart_to_label(
+                label=self._chart_mv_label,
+                dates=[d["date"] for d in mv_data],
+                values=[d["count"] for d in mv_data],
+                title="Movimientos por día",
+                color="#2196F3",
+                ylabel="Movimientos",
             )
-            self._chart_stock_label.setText(
-                f"<b>Stock digital:</b>  <code style='font-size:18px;'>{st_spark}</code>"
+            _render_chart_to_label(
+                label=self._chart_st_label,
+                dates=[d["date"] for d in st_data],
+                values=[d["stock"] for d in st_data],
+                title="Stock digital total",
+                color="#00796B",
+                ylabel="Unidades",
             )
         except Exception as e:
             logger.error(f"Error refreshing charts: {e}")
+            # Graceful fallback to sparklines
+            mv_spark = _sparkline(
+                self.service.get_movement_trend(self._branch_id, days=days), "count"
+            ) if self.service else "—"
+            self._chart_mv_label.setText(
+                f"<b>Movimientos:</b> <code>{mv_spark}</code>"
+            )
+            self._chart_mv_label.setTextFormat(Qt.TextFormat.RichText)
 
     # ----------------------------------------------------------------
     # Recent movements (Exp 4 quick actions embedded as links)
