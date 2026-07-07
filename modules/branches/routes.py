@@ -17,9 +17,10 @@ from PyQt6.QtWidgets import (
     QMessageBox, QDialog, QFormLayout, QTextEdit,
     QTabWidget, QComboBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QHeaderView, QSizePolicy, QFrame,
+    QTimeEdit, QScrollArea, QToolTip,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, pyqtSignal, QTime
+from PyQt6.QtGui import QColor, QCursor
 
 from modules.branches.service import BranchService
 from models.branch import OPERATIONAL_STATUS_VALUES, COUNT_FREQUENCY_VALUES
@@ -80,6 +81,9 @@ class BranchDialog(QDialog):
         tabs.addTab(self._tab_ubicacion(),  "Ubicación")
         tabs.addTab(self._tab_inventario(), "Inventario")
         tabs.addTab(self._tab_capacidad(),  "Capacidad")
+        tabs.addTab(self._tab_contacto(),   "Contacto")
+        tabs.addTab(self._tab_horario(),    "Horario")
+        tabs.addTab(self._tab_conteos(),    "Conteos")
         root.addWidget(tabs)
 
         # Buttons
@@ -226,11 +230,127 @@ class BranchDialog(QDialog):
 
         return w
 
+    # ── Tab 5: Contacto ──────────────────────────────────────────────────
+    def _tab_contacto(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setContentsMargins(12, 12, 12, 12)
+
+        self.contact_phone_input = QLineEdit(self.branch_data.get("contact_phone") or "")
+        self.contact_phone_input.setPlaceholderText("ej. +52 555 123 4567")
+        form.addRow("Teléfono:", self.contact_phone_input)
+
+        self.contact_email_input = QLineEdit(self.branch_data.get("contact_email") or "")
+        self.contact_email_input.setPlaceholderText("sucursal@empresa.com")
+        form.addRow("Correo electrónico:", self.contact_email_input)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        form.addRow(sep)
+
+        note = QLabel("Contacto de emergencia")
+        note.setStyleSheet("font-weight: bold; color: #b71c1c;")
+        form.addRow(note)
+
+        self.emergency_contact_input = QLineEdit(self.branch_data.get("emergency_contact") or "")
+        self.emergency_contact_input.setPlaceholderText("Nombre completo")
+        form.addRow("Persona:", self.emergency_contact_input)
+
+        self.emergency_phone_input = QLineEdit(self.branch_data.get("emergency_phone") or "")
+        self.emergency_phone_input.setPlaceholderText("ej. +52 555 987 6543")
+        form.addRow("Teléfono emergencia:", self.emergency_phone_input)
+
+        return w
+
+    # ── Tab 6: Horario ───────────────────────────────────────────────────
+    def _tab_horario(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setContentsMargins(12, 12, 12, 12)
+
+        note = QLabel("Deja en 00:00 si el horario no aplica.")
+        note.setStyleSheet("color: gray; font-size: 11px;")
+        form.addRow(note)
+
+        self.opening_time_input = QTimeEdit()
+        self.opening_time_input.setDisplayFormat("HH:mm")
+        ot = self.branch_data.get("opening_time") or "00:00"
+        h, m = map(int, ot.split(":")) if ":" in ot else (0, 0)
+        self.opening_time_input.setTime(QTime(h, m))
+        form.addRow("Hora apertura:", self.opening_time_input)
+
+        self.closing_time_input = QTimeEdit()
+        self.closing_time_input.setDisplayFormat("HH:mm")
+        ct = self.branch_data.get("closing_time") or "00:00"
+        h2, m2 = map(int, ct.split(":")) if ":" in ct else (0, 0)
+        self.closing_time_input.setTime(QTime(h2, m2))
+        form.addRow("Hora cierre:", self.closing_time_input)
+
+        self.timezone_input = QLineEdit(
+            self.branch_data.get("timezone") or "America/Mexico_City"
+        )
+        self.timezone_input.setPlaceholderText("America/Mexico_City")
+        form.addRow("Zona horaria:", self.timezone_input)
+
+        self.operational_days_input = QLineEdit(
+            self.branch_data.get("operational_days") or ""
+        )
+        self.operational_days_input.setPlaceholderText("ej. 1-5 (Lun-Vie) o 1-6 (Lun-Sáb)")
+        form.addRow("Días operativos:", self.operational_days_input)
+
+        return w
+
+    # ── Tab 7: Conteos ───────────────────────────────────────────────────
+    def _tab_conteos(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setContentsMargins(12, 12, 12, 12)
+
+        self.count_enabled_check = QCheckBox("Programación de conteos habilitada")
+        enabled = self.branch_data.get("count_enabled")
+        self.count_enabled_check.setChecked(enabled if enabled is not None else True)
+        form.addRow("", self.count_enabled_check)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        form.addRow(sep)
+
+        last_count = self.branch_data.get("last_count_date") or "—"
+        if last_count and last_count != "—":
+            try:
+                last_count = last_count[:10]   # keep YYYY-MM-DD only
+            except Exception:
+                pass
+        form.addRow("Último conteo:", QLabel(str(last_count)))
+
+        next_count = self.branch_data.get("next_scheduled_count") or "—"
+        if next_count and next_count != "—":
+            try:
+                next_count = next_count[:10]
+            except Exception:
+                pass
+        form.addRow("Próximo conteo:", QLabel(str(next_count)))
+
+        note = QLabel(
+            "La frecuencia de conteo se configura en la pestaña 'Capacidad'.\n"
+            "Usa el botón 'Programar conteo' en la lista para recalcular la fecha."
+        )
+        note.setStyleSheet("color: gray; font-size: 11px;")
+        note.setWordWrap(True)
+        form.addRow(note)
+
+        return w
+
     # ── Collect data ─────────────────────────────────────────────────────
     def get_data(self) -> dict:
         """Return a dict with all form values, ready for the service."""
         lat = self.lat_input.value()
         lon = self.lon_input.value()
+
+        ot = self.opening_time_input.time()
+        ct = self.closing_time_input.time()
+        opening_str = ot.toString("HH:mm") if ot != QTime(0, 0) else None
+        closing_str = ct.toString("HH:mm") if ct != QTime(0, 0) else None
 
         return {
             # General
@@ -252,6 +372,18 @@ class BranchDialog(QDialog):
             "storage_capacity": self.capacity_input.text().strip() or None,
             "max_products":     self.max_products_input.value() or None,
             "count_frequency":  self.freq_combo.currentData(),
+            # Contacto
+            "contact_phone":     self.contact_phone_input.text().strip() or None,
+            "contact_email":     self.contact_email_input.text().strip() or None,
+            "emergency_contact": self.emergency_contact_input.text().strip() or None,
+            "emergency_phone":   self.emergency_phone_input.text().strip() or None,
+            # Horario
+            "opening_time":    opening_str,
+            "closing_time":    closing_str,
+            "timezone":        self.timezone_input.text().strip() or None,
+            "operational_days": self.operational_days_input.text().strip() or None,
+            # Conteos
+            "count_enabled": self.count_enabled_check.isChecked(),
         }
 
 
@@ -361,16 +493,18 @@ class BranchListView(QWidget):
 
     # Table columns: (header_label, data_key_or_None)
     _COLUMNS = [
-        ("ID",               "id"),           # 0 – hidden
-        ("Nombre",           "name"),          # 1
-        ("Dirección",        "address"),       # 2
-        ("Zona",             "zone"),          # 3
-        ("Ciudad",           "city"),          # 4
+        ("ID",               "id"),                  # 0 – hidden
+        ("Nombre",           "name"),                # 1
+        ("Dirección",        "address"),             # 2
+        ("Zona",             "zone"),                # 3
+        ("Ciudad",           "city"),                # 4
         ("Estado operativo", "operational_status"),  # 5
-        ("Responsable",      None),            # 6 – resolved separately
-        ("Alertas stock",    "stock_alert_enabled"),  # 7
-        ("Estado",           "is_active"),     # 8
-        ("Acciones",         None),            # 9
+        ("Responsable",      None),                  # 6 – resolved separately
+        ("Alertas stock",    "stock_alert_enabled"), # 7
+        ("Próximo conteo",   "next_scheduled_count"),# 8
+        ("Conexión",         "connection_status"),   # 9
+        ("Estado",           "is_active"),           # 10
+        ("Acciones",         None),                  # 11
     ]
 
     def __init__(self, db: Session, parent=None):
@@ -402,7 +536,36 @@ class BranchListView(QWidget):
         add_btn.clicked.connect(self._on_add)
         header.addWidget(add_btn)
 
+        comparative_btn = QPushButton("Reporte Comparativo")
+        comparative_btn.clicked.connect(self._on_comparative_report)
+        header.addWidget(comparative_btn)
+
         root.addLayout(header)
+
+        # ── Session branch selector ──────────────────────────────────────
+        session_row = QHBoxLayout()
+        session_lbl = QLabel("Sucursal de trabajo:")
+        session_lbl.setStyleSheet("font-weight: bold;")
+        session_row.addWidget(session_lbl)
+
+        self.session_combo = QComboBox()
+        self.session_combo.setMinimumWidth(220)
+        self.session_combo.setToolTip(
+            "Selecciona la sucursal en la que estás trabajando actualmente.\n"
+            "Esta selección es volátil (se pierde al cerrar la aplicación)."
+        )
+        session_row.addWidget(self.session_combo)
+
+        set_session_btn = QPushButton("Establecer")
+        set_session_btn.clicked.connect(self._on_set_session_branch)
+        session_row.addWidget(set_session_btn)
+
+        self.session_label = QLabel("(ninguna)")
+        self.session_label.setStyleSheet("color: gray; font-style: italic;")
+        session_row.addWidget(self.session_label)
+        session_row.addStretch()
+
+        root.addLayout(session_row)
 
         # ── Table ────────────────────────────────────────────────────────
         self.table = QTableWidget()
@@ -414,6 +577,7 @@ class BranchListView(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setColumnHidden(0, True)   # hide ID
         self.table.verticalHeader().setVisible(False)
+        self.table.setMouseTracking(True)
 
         root.addWidget(self.table)
 
@@ -428,8 +592,13 @@ class BranchListView(QWidget):
             QMessageBox.critical(self, "Error", f"No se pudieron cargar las sucursales: {e}")
             return
 
+        # Refresh session combo
+        self._refresh_session_combo(branches)
+
         self.table.setRowCount(0)
         self.table.setRowCount(len(branches))
+
+        from datetime import datetime, timezone as _tz
 
         for row, branch in enumerate(branches):
             bid = branch["id"]
@@ -438,7 +607,16 @@ class BranchListView(QWidget):
             self.table.setItem(row, 0, QTableWidgetItem(str(bid)))
 
             # 1 – Nombre
-            self.table.setItem(row, 1, QTableWidgetItem(branch["name"]))
+            name_item = QTableWidgetItem(branch["name"])
+            # Build tooltip with contact info
+            tooltip_parts = []
+            if branch.get("contact_phone"):
+                tooltip_parts.append(f"Tel: {branch['contact_phone']}")
+            if branch.get("contact_email"):
+                tooltip_parts.append(f"Email: {branch['contact_email']}")
+            if tooltip_parts:
+                name_item.setToolTip("\n".join(tooltip_parts))
+            self.table.setItem(row, 1, name_item)
 
             # 2 – Dirección
             self.table.setItem(row, 2, QTableWidgetItem(branch.get("address") or "—"))
@@ -476,25 +654,85 @@ class BranchListView(QWidget):
             alert_item.setForeground(QColor("#2e7d32" if alert_on else "#b71c1c"))
             self.table.setItem(row, 7, alert_item)
 
-            # 8 – Activa
+            # 8 – Próximo conteo (color-coded)
+            next_count = branch.get("next_scheduled_count")
+            count_enabled = branch.get("count_enabled", True)
+            if not count_enabled or not next_count:
+                count_text = "—"
+                count_color = "#888888"
+            else:
+                try:
+                    nc_dt = datetime.fromisoformat(next_count.replace("Z", "+00:00"))
+                    nc_naive = nc_dt.replace(tzinfo=None)
+                    now_naive = datetime.utcnow()
+                    delta = (nc_naive - now_naive).days
+                    count_text = next_count[:10]
+                    if delta < 0:
+                        count_color = "#b71c1c"   # overdue – red
+                    elif delta <= 7:
+                        count_color = "#e65100"   # soon – orange
+                    else:
+                        count_color = "#2e7d32"   # ok – green
+                except Exception:
+                    count_text = next_count[:10] if next_count else "—"
+                    count_color = "#000000"
+            count_item = QTableWidgetItem(count_text)
+            count_item.setForeground(QColor(count_color))
+            self.table.setItem(row, 8, count_item)
+
+            # 9 – Conexión (indicator dot + text)
+            conn = branch.get("connection_status") or "unknown"
+            conn_labels = {"online": "● Online", "offline": "● Offline", "unknown": "● —"}
+            conn_colors = {"online": "#2e7d32", "offline": "#b71c1c", "unknown": "#888888"}
+            conn_item = QTableWidgetItem(conn_labels.get(conn, conn))
+            conn_item.setForeground(QColor(conn_colors.get(conn, "#888888")))
+            last_seen = branch.get("last_seen_at")
+            if last_seen:
+                conn_item.setToolTip(f"Última conexión: {last_seen[:19].replace('T', ' ')}")
+            self.table.setItem(row, 9, conn_item)
+
+            # 10 – Activa
             active_item = QTableWidgetItem("Activa" if branch["is_active"] else "Inactiva")
             active_item.setForeground(
                 QColor("#2e7d32" if branch["is_active"] else "#b71c1c")
             )
-            self.table.setItem(row, 8, active_item)
+            self.table.setItem(row, 10, active_item)
 
-            # 9 – Acciones
-            self.table.setCellWidget(row, 9, self._make_actions(bid))
+            # 11 – Acciones
+            self.table.setCellWidget(row, 11, self._make_actions(bid))
 
         self.table.resizeColumnsToContents()
         self.table.horizontalHeader().setSectionResizeMode(
-            9, QHeaderView.ResizeMode.Fixed
+            11, QHeaderView.ResizeMode.Fixed
         )
-        self.table.setColumnWidth(9, 280)
+        self.table.setColumnWidth(11, 380)
+
+    # ── Session combo helper ───────────────────────────────────────────────
+    def _refresh_session_combo(self, branches: list):
+        """Repopulate the session branch dropdown."""
+        current_id = self.service._session_branch_id
+        self.session_combo.blockSignals(True)
+        self.session_combo.clear()
+        self.session_combo.addItem("(sin selección)", None)
+        for b in branches:
+            if b.get("is_active"):
+                self.session_combo.addItem(b["name"], b["id"])
+        if current_id is not None:
+            idx = self.session_combo.findData(current_id)
+            if idx >= 0:
+                self.session_combo.setCurrentIndex(idx)
+            sess = self.service.get_current_session_branch()
+            if sess:
+                self.session_label.setText(f"Activa: {sess['name']}")
+                self.session_label.setStyleSheet("color: #2e7d32; font-weight: bold;")
+        else:
+            self.session_label.setText("(ninguna)")
+            self.session_label.setStyleSheet("color: gray; font-style: italic;")
+        self.session_combo.blockSignals(False)
 
     # ── Actions widget per row ─────────────────────────────────────────────
     def _make_actions(self, branch_id: int) -> QWidget:
-        """Build the 'Editar / Estado / Responsable / Eliminar' button group."""
+        """Build the per-row action button group."""
         w = QWidget()
         lay = QHBoxLayout(w)
         lay.setContentsMargins(4, 2, 4, 2)
@@ -512,12 +750,22 @@ class BranchListView(QWidget):
         manager_btn.setFixedWidth(90)
         manager_btn.clicked.connect(lambda _, bid=branch_id: self._on_assign_manager(bid))
 
+        count_btn = QPushButton("Programar conteo")
+        count_btn.setFixedWidth(120)
+        count_btn.setToolTip("Recalcula la próxima fecha de conteo según la frecuencia configurada")
+        count_btn.clicked.connect(lambda _, bid=branch_id: self._on_schedule_count(bid))
+
+        history_btn = QPushButton("Historial")
+        history_btn.setFixedWidth(70)
+        history_btn.setToolTip("Ver historial de cambios de configuración")
+        history_btn.clicked.connect(lambda _, bid=branch_id: self._on_view_history(bid))
+
         delete_btn = QPushButton("Eliminar")
         delete_btn.setFixedWidth(65)
         delete_btn.setStyleSheet("color: #b71c1c;")
         delete_btn.clicked.connect(lambda _, bid=branch_id: self._on_delete(bid))
 
-        for btn in (edit_btn, status_btn, manager_btn, delete_btn):
+        for btn in (edit_btn, status_btn, manager_btn, count_btn, history_btn, delete_btn):
             lay.addWidget(btn)
 
         return w
@@ -611,3 +859,224 @@ class BranchListView(QWidget):
     # Kept for compatibility with MainWindow.refresh_current_view()
     def load_data(self):
         self.load_branches(self.search_input.text().strip() or None)
+
+    # ── New handlers ──────────────────────────────────────────────────────
+
+    def _on_set_session_branch(self):
+        """Set the working session branch from the dropdown."""
+        branch_id = self.session_combo.currentData()
+        if branch_id is None:
+            self.service.clear_session_branch()
+            self.session_label.setText("(ninguna)")
+            self.session_label.setStyleSheet("color: gray; font-style: italic;")
+            return
+        try:
+            branch = self.service.set_current_session_branch(branch_id)
+            self.session_label.setText(f"Activa: {branch['name']}")
+            self.session_label.setStyleSheet("color: #2e7d32; font-weight: bold;")
+            QMessageBox.information(
+                self, "Sucursal de trabajo",
+                f"Sucursal de trabajo establecida:\n{branch['name']}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo establecer la sucursal:\n{e}")
+
+    def _on_schedule_count(self, branch_id: int):
+        """Recalculate and persist next_scheduled_count for a branch."""
+        try:
+            updated = self.service.schedule_next_count(branch_id)
+            if not updated:
+                QMessageBox.warning(self, "Aviso", "Sucursal no encontrada.")
+                return
+            next_date = updated.get("next_scheduled_count", "—")
+            if next_date and next_date != "—":
+                next_date = next_date[:10]
+            if not updated.get("count_frequency"):
+                QMessageBox.information(
+                    self, "Sin frecuencia",
+                    "Esta sucursal no tiene frecuencia de conteo configurada.\n"
+                    "Configúrala en la pestaña 'Capacidad' del diálogo de edición."
+                )
+            else:
+                QMessageBox.information(
+                    self, "Conteo programado",
+                    f"Próximo conteo programado para:\n{next_date}"
+                )
+            self.load_branches(self.search_input.text().strip() or None)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al programar conteo:\n{e}")
+
+    def _on_view_history(self, branch_id: int):
+        """Open the config history dialog for a branch."""
+        branch = self.service.get_branch(branch_id)
+        if not branch:
+            QMessageBox.warning(self, "Error", "Sucursal no encontrada.")
+            return
+        dialog = ConfigHistoryDialog(branch, self.service, self)
+        dialog.exec()
+
+    def _on_comparative_report(self):
+        """Open the comparative report dialog."""
+        dialog = ComparativeReportDialog(self.service, self)
+        dialog.exec()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ConfigHistoryDialog  –  Ver historial de cambios de configuración
+# ═══════════════════════════════════════════════════════════════════════════
+class ConfigHistoryDialog(QDialog):
+    """Shows the config-change audit trail for a single branch."""
+
+    _COLUMNS = [
+        "Campo",
+        "Valor anterior",
+        "Valor nuevo",
+        "Fecha",
+        "Quién",
+        "Motivo",
+    ]
+
+    def __init__(self, branch_data: dict, service: "BranchService", parent=None):
+        super().__init__(parent)
+        self.branch_data = branch_data
+        self.service = service
+        self.setWindowTitle(f"Historial de cambios — {branch_data['name']}")
+        self.setMinimumSize(780, 420)
+        self._setup_ui()
+        self._load()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        info = QLabel(
+            f"Sucursal: <b>{self.branch_data['name']}</b> &nbsp;|&nbsp; "
+            f"ID: {self.branch_data['id']}"
+        )
+        info.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(info)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(len(self._COLUMNS))
+        self.table.setHorizontalHeaderLabels(self._COLUMNS)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Cerrar")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+    def _load(self):
+        try:
+            history = self.service.get_branch_change_history(
+                self.branch_data["id"], limit=200
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo cargar el historial:\n{e}")
+            return
+
+        self.table.setRowCount(len(history))
+        for row, entry in enumerate(history):
+            self.table.setItem(row, 0, QTableWidgetItem(entry.get("field_name") or "—"))
+            self.table.setItem(row, 1, QTableWidgetItem(str(entry.get("old_value") or "—")))
+            self.table.setItem(row, 2, QTableWidgetItem(str(entry.get("new_value") or "—")))
+            changed_at = entry.get("changed_at") or ""
+            self.table.setItem(row, 3, QTableWidgetItem(changed_at[:19].replace("T", " ")))
+            self.table.setItem(row, 4, QTableWidgetItem(entry.get("changed_by") or "—"))
+            self.table.setItem(row, 5, QTableWidgetItem(entry.get("reason") or "—"))
+
+        self.table.resizeColumnsToContents()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ComparativeReportDialog  –  Reporte comparativo de sucursales
+# ═══════════════════════════════════════════════════════════════════════════
+class ComparativeReportDialog(QDialog):
+    """Side-by-side comparative metrics for all branches with ranking."""
+
+    _COLUMNS = [
+        ("Ranking\nDiscrepancia", "rank_by_discrepancy"),
+        ("Ranking\nActividad",   "rank_by_activity"),
+        ("Sucursal",             "name"),
+        ("Estado",               "operational_status"),
+        ("Total SKUs",           "total_skus"),
+        ("Discrepancias",        "discrepancy_count"),
+        ("Tasa disc. %",         "discrepancy_rate"),
+        ("Stock bajo",           "low_stock_count"),
+        ("Movs 30d",             "movement_count_30d"),
+        ("Vel/día",              "movement_velocity"),
+    ]
+
+    def __init__(self, service: "BranchService", parent=None):
+        super().__init__(parent)
+        self.service = service
+        self.setWindowTitle("Reporte Comparativo de Sucursales")
+        self.setMinimumSize(900, 500)
+        self._setup_ui()
+        self._load()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        title = QLabel("Métricas comparativas — todas las sucursales activas")
+        title.setStyleSheet("font-size: 14px; font-weight: bold;")
+        layout.addWidget(title)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(len(self._COLUMNS))
+        self.table.setHorizontalHeaderLabels([c[0] for c in self._COLUMNS])
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        refresh_btn = QPushButton("Actualizar")
+        refresh_btn.clicked.connect(self._load)
+        close_btn = QPushButton("Cerrar")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(refresh_btn)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+    def _load(self):
+        try:
+            report = self.service.get_branch_comparative_report()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo generar el reporte:\n{e}")
+            return
+
+        self.table.setRowCount(len(report))
+        for row, entry in enumerate(report):
+            for col, (_, key) in enumerate(self._COLUMNS):
+                val = entry.get(key, "—")
+                item = QTableWidgetItem(str(val))
+
+                # Colour ranking cells
+                if key == "rank_by_discrepancy":
+                    if val == 1:
+                        item.setForeground(QColor("#b71c1c"))   # worst = red
+                    elif val <= 3:
+                        item.setForeground(QColor("#e65100"))   # top-3 = orange
+                if key == "discrepancy_rate":
+                    rate = entry.get("discrepancy_rate", 0)
+                    if rate >= 10:
+                        item.setForeground(QColor("#b71c1c"))
+                    elif rate >= 5:
+                        item.setForeground(QColor("#e65100"))
+                    else:
+                        item.setForeground(QColor("#2e7d32"))
+
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table.setItem(row, col, item)
+
+        self.table.resizeColumnsToContents()

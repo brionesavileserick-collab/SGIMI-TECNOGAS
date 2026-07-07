@@ -53,6 +53,7 @@ def init_db() -> None:
     from models import (  # noqa: F401 – side-effects register tables with Base
         product, category, supplier, product_relation, price_history,
         branch, inventory, inventory_history, movement, user, saved_report,
+        branch_config_history,
     )
     # Dashboard widget config model (Exp 9)
     from models import dashboard_widget_config  # noqa: F401

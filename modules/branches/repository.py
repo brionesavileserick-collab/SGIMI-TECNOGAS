@@ -402,3 +402,219 @@ class BranchRepository:
             .all()
         )
         return [{"branch_id": r.branch_id, "movement_count": r.movement_count} for r in rows]
+
+    # ------------------------------------------------------------------
+    # Expansión 7 – Programación de conteos
+    # ------------------------------------------------------------------
+
+    def get_branches_due_for_count(self, active_only: bool = True) -> List[Branch]:
+        """Return branches whose next_scheduled_count is today or earlier."""
+        from datetime import datetime
+
+        now = datetime.utcnow()
+        query = self.db.query(Branch).filter(
+            Branch.count_enabled == True,
+            Branch.next_scheduled_count.isnot(None),
+            Branch.next_scheduled_count <= now,
+        )
+        if active_only:
+            query = query.filter(Branch.is_active == True)
+        return query.order_by(Branch.next_scheduled_count).all()
+
+    def get_branches_with_overdue_counts(
+        self, days: int = 7, active_only: bool = True
+    ) -> List[Branch]:
+        """Return branches whose next_scheduled_count is overdue by at least *days* days."""
+        from datetime import datetime, timedelta
+
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        query = self.db.query(Branch).filter(
+            Branch.count_enabled == True,
+            Branch.next_scheduled_count.isnot(None),
+            Branch.next_scheduled_count <= cutoff,
+        )
+        if active_only:
+            query = query.filter(Branch.is_active == True)
+        return query.order_by(Branch.next_scheduled_count).all()
+
+    def get_upcoming_counts(
+        self, days: int = 30, active_only: bool = True
+    ) -> List[Branch]:
+        """Return branches with next_scheduled_count within the next *days* days."""
+        from datetime import datetime, timedelta
+
+        now = datetime.utcnow()
+        future = now + timedelta(days=days)
+        query = self.db.query(Branch).filter(
+            Branch.count_enabled == True,
+            Branch.next_scheduled_count.isnot(None),
+            Branch.next_scheduled_count > now,
+            Branch.next_scheduled_count <= future,
+        )
+        if active_only:
+            query = query.filter(Branch.is_active == True)
+        return query.order_by(Branch.next_scheduled_count).all()
+
+    def update_next_scheduled_count(
+        self, branch_id: int, next_date
+    ) -> Optional[Branch]:
+        """Persist the calculated next_scheduled_count for a branch."""
+        branch = self.get_by_id(branch_id)
+        if not branch:
+            return None
+        branch.next_scheduled_count = next_date
+        self.db.commit()
+        self.db.refresh(branch)
+        return branch
+
+    def update_last_count_date(self, branch_id: int, count_date) -> Optional[Branch]:
+        """Record the date of the last completed inventory count."""
+        branch = self.get_by_id(branch_id)
+        if not branch:
+            return None
+        branch.last_count_date = count_date
+        self.db.commit()
+        self.db.refresh(branch)
+        return branch
+
+    # ------------------------------------------------------------------
+    # Expansión 8 – Historial de configuración
+    # ------------------------------------------------------------------
+
+    def log_config_change(
+        self,
+        branch_id: int,
+        field_name: str,
+        old_value,
+        new_value,
+        changed_by: str = None,
+        reason: str = None,
+    ):
+        """Append one row to branch_config_history."""
+        from models.branch_config_history import BranchConfigHistory
+
+        entry = BranchConfigHistory(
+            branch_id=branch_id,
+            changed_by=changed_by,
+            field_name=field_name,
+            old_value=str(old_value) if old_value is not None else None,
+            new_value=str(new_value) if new_value is not None else None,
+            reason=reason,
+        )
+        self.db.add(entry)
+        self.db.commit()
+        self.db.refresh(entry)
+        return entry
+
+    def get_branch_config_history(
+        self, branch_id: int, limit: int = 100
+    ) -> List[Any]:
+        """Return the last *limit* config-change records for a branch, newest first."""
+        from models.branch_config_history import BranchConfigHistory
+
+        return (
+            self.db.query(BranchConfigHistory)
+            .filter(BranchConfigHistory.branch_id == branch_id)
+            .order_by(BranchConfigHistory.changed_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    # ------------------------------------------------------------------
+    # Expansión 9 – Validación de capacidad
+    # ------------------------------------------------------------------
+
+    def get_branch_capacity_usage(self, branch_id: int) -> Dict[str, Any]:
+        """
+        Return current capacity usage for a branch.
+        Dict keys: current_count, max_products, usage_percent, is_near_capacity.
+        is_near_capacity is True when usage >= 80 %.
+        """
+        branch = self.get_by_id(branch_id)
+        if not branch:
+            return {
+                "current_count": 0,
+                "max_products": None,
+                "usage_percent": None,
+                "is_near_capacity": False,
+            }
+
+        current_count = self.get_sku_count_for_branch(branch_id)
+        max_products = branch.max_products
+
+        if max_products:
+            usage_percent = round((current_count / max_products) * 100, 1)
+            is_near_capacity = usage_percent >= 80.0
+        else:
+            usage_percent = None
+            is_near_capacity = False
+
+        return {
+            "current_count": current_count,
+            "max_products": max_products,
+            "usage_percent": usage_percent,
+            "is_near_capacity": is_near_capacity,
+        }
+
+    # ------------------------------------------------------------------
+    # Expansión 10 – Métricas comparativas
+    # ------------------------------------------------------------------
+
+    def get_branch_discrepancy_rate(
+        self, branch_id: int, days: int = 30
+    ) -> Dict[str, Any]:
+        """
+        Return the discrepancy rate for a branch as a percentage.
+        discrepancy_rate = discrepancy_count / total_skus * 100 (0 when no SKUs).
+        """
+        total_skus = self.get_sku_count_for_branch(branch_id)
+        discrepancy_count = self.get_discrepancy_count_for_branch(branch_id)
+        rate = round((discrepancy_count / total_skus) * 100, 2) if total_skus else 0.0
+
+        return {
+            "branch_id": branch_id,
+            "total_skus": total_skus,
+            "discrepancy_count": discrepancy_count,
+            "discrepancy_rate": rate,
+        }
+
+    def get_branch_movement_velocity(
+        self, branch_id: int, days: int = 30
+    ) -> Dict[str, Any]:
+        """
+        Return movement velocity (movements per day) for a branch.
+        velocity = movement_count / days.
+        """
+        movement_count = self.get_movement_count_for_branch(branch_id, days=days)
+        velocity = round(movement_count / days, 2) if days else 0.0
+
+        return {
+            "branch_id": branch_id,
+            "period_days": days,
+            "movement_count": movement_count,
+            "velocity_per_day": velocity,
+        }
+
+    # ------------------------------------------------------------------
+    # Expansión 11 – Estado de conectividad
+    # ------------------------------------------------------------------
+
+    def get_offline_branches(
+        self, offline_threshold_minutes: int = 60, active_only: bool = True
+    ) -> List[Branch]:
+        """
+        Return branches whose last_seen_at is older than *offline_threshold_minutes*
+        minutes ago, or whose connection_status is 'offline'.
+        """
+        from datetime import datetime, timedelta
+
+        cutoff = datetime.utcnow() - timedelta(minutes=offline_threshold_minutes)
+        query = self.db.query(Branch).filter(
+            or_(
+                Branch.connection_status == "offline",
+                Branch.last_seen_at < cutoff,
+            )
+        )
+        if active_only:
+            query = query.filter(Branch.is_active == True)
+        return query.order_by(Branch.last_seen_at.asc().nullsfirst()).all()

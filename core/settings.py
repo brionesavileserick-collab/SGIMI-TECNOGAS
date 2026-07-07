@@ -73,6 +73,12 @@ class Settings:
         BRANCH_DELETED = "branch.deleted"
         BRANCH_STATUS_CHANGED = "branch.status_changed"
         BRANCH_MANAGER_ASSIGNED = "branch.manager_assigned"
+        # Branch – count scheduling events
+        BRANCH_COUNT_SCHEDULED = "branch.count_scheduled"
+        BRANCH_COUNT_OVERDUE = "branch.count_overdue"
+        # Branch – capacity events
+        BRANCH_CAPACITY_WARNING = "branch.capacity_warning"
+        BRANCH_CAPACITY_EXCEEDED = "branch.capacity_exceeded"
 
         # Movement events
         MOVEMENT_CREATED = "movement.created"

@@ -86,6 +86,35 @@ class Branch(Base):
     max_products = Column(Integer, nullable=True)          # Máximo de SKUs que puede manejar
 
     # ------------------------------------------------------------------
+    # Expansión 7 – Programación de conteos (Fase 2, Prioridad Alta)
+    # ------------------------------------------------------------------
+    last_count_date = Column(DateTime(timezone=True), nullable=True)
+    next_scheduled_count = Column(DateTime(timezone=True), nullable=True)
+    count_enabled = Column(Boolean, default=True, nullable=True)
+
+    # ------------------------------------------------------------------
+    # Expansión 8 – Contactos de sucursal (Fase 2, Prioridad Media)
+    # ------------------------------------------------------------------
+    contact_phone = Column(String(20), nullable=True)
+    contact_email = Column(String(255), nullable=True)
+    emergency_contact = Column(String(100), nullable=True)  # Nombre persona de emergencia
+    emergency_phone = Column(String(20), nullable=True)
+
+    # ------------------------------------------------------------------
+    # Expansión 9 – Horarios de operación (Fase 2, Prioridad Media)
+    # ------------------------------------------------------------------
+    opening_time = Column(String(5), nullable=True)   # formato "08:00"
+    closing_time = Column(String(5), nullable=True)   # formato "18:00"
+    timezone = Column(String(50), nullable=True, default="America/Mexico_City")
+    operational_days = Column(String(20), nullable=True)  # ej. "1-6" = lunes a sábado
+
+    # ------------------------------------------------------------------
+    # Expansión 10 – Estado de conectividad (Fase 3, Futuro)
+    # ------------------------------------------------------------------
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    connection_status = Column(String(20), nullable=True, default="unknown")
+
+    # ------------------------------------------------------------------
     # Relationships
     # ------------------------------------------------------------------
     inventory_items = relationship(
@@ -131,4 +160,21 @@ class Branch(Base):
             # Expansión 6 – Capacidad
             "storage_capacity": self.storage_capacity,
             "max_products": self.max_products,
+            # Expansión 7 – Programación de conteos
+            "last_count_date": self.last_count_date.isoformat() if self.last_count_date else None,
+            "next_scheduled_count": self.next_scheduled_count.isoformat() if self.next_scheduled_count else None,
+            "count_enabled": self.count_enabled if self.count_enabled is not None else True,
+            # Expansión 8 – Contactos
+            "contact_phone": self.contact_phone,
+            "contact_email": self.contact_email,
+            "emergency_contact": self.emergency_contact,
+            "emergency_phone": self.emergency_phone,
+            # Expansión 9 – Horarios
+            "opening_time": self.opening_time,
+            "closing_time": self.closing_time,
+            "timezone": self.timezone or "America/Mexico_City",
+            "operational_days": self.operational_days,
+            # Expansión 10 – Conectividad
+            "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
+            "connection_status": self.connection_status or "unknown",
         }
