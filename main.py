@@ -30,6 +30,7 @@ from modules.movements.handlers import setup_movement_handlers
 from modules.alerts.handlers import setup_alert_handlers
 from modules.history.handlers import setup_history_handlers
 from modules.dashboard.handlers import setup_dashboard_handlers
+from modules.communication.handlers import CommunicationHandlers
 
 # Services
 from modules.user import User
@@ -47,6 +48,7 @@ from modules.alerts.routes import AlertListView
 from modules.history.routes import HistoryView
 from modules.reports.routes import ReportsView
 from modules.user.routes import UserListView
+from modules.communication.routes import CommunicationListView
 
 logger = logging.getLogger(__name__)
 
@@ -461,6 +463,7 @@ class MainWindow(QMainWindow):
             ("Alertas", "!"),
             ("Historial", "H"),
             ("Reportes", "R"),
+            ("Comunicacion", "✉"),
             ("Usuarios", "👤"),
         ]
 
@@ -526,6 +529,24 @@ class MainWindow(QMainWindow):
         # Branch actions are populated dynamically in load_views() once BranchService is ready
         self._mode_menu_ref = mode_menu
 
+        # Communication menu
+        communication_menu = menubar.addMenu("Comunicaciones")
+        inbox_action = QAction("Bandeja de Entrada", self)
+        inbox_action.triggered.connect(self.open_communication)
+        communication_menu.addAction(inbox_action)
+
+        compose_action = QAction("Redactar", self)
+        compose_action.triggered.connect(self.open_compose_message)
+        communication_menu.addAction(compose_action)
+
+        sent_action = QAction("Enviados", self)
+        sent_action.triggered.connect(self.open_communication)
+        communication_menu.addAction(sent_action)
+
+        announcements_action = QAction("Anuncios", self)
+        announcements_action.triggered.connect(self.open_communication)
+        communication_menu.addAction(announcements_action)
+
         # Help menu
         help_menu = menubar.addMenu("Ayuda")
 
@@ -576,6 +597,14 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        # ── Communication shortcut ────────────────────────────────────
+        self.communication_button = QPushButton("Comunicacion")
+        self.communication_button.setToolTip("Abrir bandeja de comunicaciones")
+        self.communication_button.clicked.connect(self.open_communication)
+        toolbar.addWidget(self.communication_button)
+
+        toolbar.addSeparator()
+
         # ── Refresh ──────────────────────────────────────────────────────
         refresh_action = QAction("↺  Actualizar", self)
         refresh_action.triggered.connect(self.refresh_current_view)
@@ -617,6 +646,10 @@ class MainWindow(QMainWindow):
         self.reports_view = ReportsView(self.db)
         self.content_stack.addWidget(self.reports_view)
 
+        # Communication
+        self.communication_view = CommunicationListView(self.db, self.user)
+        self.content_stack.addWidget(self.communication_view)
+
         # Users
         self.users_view = UserListView(self.db)
         self.content_stack.addWidget(self.users_view)
@@ -632,29 +665,20 @@ class MainWindow(QMainWindow):
         self.handlers.append(setup_movement_handlers(self.db))
         self.handlers.append(setup_alert_handlers(self.db))
         self.handlers.append(setup_history_handlers(self.db))
+        self.handlers.append(CommunicationHandlers(self.db))
 
         logger.info("All event handlers registered")
 
     def switch_view(self, view_name):
         """Switch to specified view."""
-        view_index = {
-            "Dashboard": 0,
-            "Productos": 1,
-            "Sucursales": 2,
-            "Inventario": 3,
-            "Movimientos": 4,
-            "Alertas": 5,
-            "Historial": 6,
-            "Reportes": 7,
-            "Usuarios": 8,
-        }
+        view_index = self._nav_index(view_name)
 
-        if view_name in view_index:
+        if view_name in {"Dashboard", "Productos", "Sucursales", "Inventario", "Movimientos", "Alertas", "Historial", "Reportes", "Comunicacion", "Usuarios"}:
             # Update nav buttons
             for i, btn in enumerate(self.nav_buttons):
-                btn.setChecked(i == view_index[view_name])
+                btn.setChecked(i == view_index)
 
-            self.content_stack.setCurrentIndex(view_index[view_name])
+            self.content_stack.setCurrentIndex(view_index)
 
     def refresh_current_view(self):
         """Refresh current view — all views implement load_data()."""
@@ -784,6 +808,46 @@ class MainWindow(QMainWindow):
                 self.alerts_label.setStyleSheet("padding: 5px;")
         except Exception as e:
             logger.exception(f"Error updating alerts count: {e}")
+
+    def open_communication(self):
+        """Open the communication view."""
+        try:
+            if not hasattr(self, "communication_view"):
+                self.communication_view = CommunicationListView(self.db, self.user)
+                self.content_stack.addWidget(self.communication_view)
+            self.content_stack.setCurrentWidget(self.communication_view)
+            for idx, btn in enumerate(self.nav_buttons):
+                btn.setChecked(idx == self._nav_index("Comunicacion"))
+        except Exception as exc:
+            logger.exception(f"Error opening communication view: {exc}")
+            QMessageBox.critical(self, "Error", f"No se pudo abrir Comunicaciones: {exc}")
+
+    def open_compose_message(self):
+        """Open the compose dialog for a new message."""
+        try:
+            from modules.communication.routes import ComposeMessageDialog
+            dialog = ComposeMessageDialog(self.db, self.user, self)
+            dialog.exec()
+            if hasattr(self, "communication_view"):
+                self.communication_view.load_data()
+        except Exception as exc:
+            logger.exception(f"Error opening compose dialog: {exc}")
+            QMessageBox.critical(self, "Error", f"No se pudo abrir el editor: {exc}")
+
+    def _nav_index(self, view_name: str) -> int:
+        mapping = {
+            "Dashboard": 0,
+            "Productos": 1,
+            "Sucursales": 2,
+            "Inventario": 3,
+            "Movimientos": 4,
+            "Alertas": 5,
+            "Historial": 6,
+            "Reportes": 7,
+            "Comunicacion": 8,
+            "Usuarios": 9,
+        }
+        return mapping.get(view_name, 0)
 
     def show_about(self):
         """Show about dialog."""

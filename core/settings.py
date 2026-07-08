@@ -124,6 +124,16 @@ class Settings:
         # Alert events
         ALERT_GENERATED = "alert.generated"
 
+        # Communication events
+        COMMUNICATION_SENT = "communication.sent"
+        COMMUNICATION_RECEIVED = "communication.received"
+        COMMUNICATION_READ = "communication.read"
+        COMMUNICATION_ARCHIVED = "communication.archived"
+        COMMUNICATION_REPLY = "communication.reply"
+        COMMUNICATION_CONFIRMATION_REQUESTED = "communication.confirmation_requested"
+        COMMUNICATION_CONFIRMATION_RECEIVED = "communication.confirmation_received"
+        ANNOUNCEMENT_BROADCAST = "communication.announcement_broadcast"
+
         # User events
         USER_CREATED = "user.created"
         USER_UPDATED = "user.updated"

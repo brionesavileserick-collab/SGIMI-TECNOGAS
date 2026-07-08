@@ -56,6 +56,7 @@ def init_db() -> None:
         inventory_count_item, inventory_batch, movement, user, saved_report,
         branch_config_history,
     )
+    from modules.communication import models as communication_models  # noqa: F401
     # Dashboard widget config model (Exp 9)
     from models import dashboard_widget_config  # noqa: F401
     # Product expansion models
