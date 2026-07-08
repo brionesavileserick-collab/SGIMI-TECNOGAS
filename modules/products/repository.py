@@ -41,11 +41,15 @@ class ProductRepository:
 
     def create(self, product_data: dict) -> Product:
         """Create a new product."""
-        product = Product(**product_data)
-        self.db.add(product)
-        self.db.commit()
-        self.db.refresh(product)
-        return product
+        try:
+            product = Product(**product_data)
+            self.db.add(product)
+            self.db.commit()
+            self.db.refresh(product)
+            return product
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def get_by_id(self, product_id: int) -> Optional[Product]:
         """Get product by ID."""
@@ -144,13 +148,17 @@ class ProductRepository:
         if not product:
             return None
 
-        for key, value in update_data.items():
-            if hasattr(product, key):
-                setattr(product, key, value)
+        try:
+            for key, value in update_data.items():
+                if hasattr(product, key):
+                    setattr(product, key, value)
 
-        self.db.commit()
-        self.db.refresh(product)
-        return product
+            self.db.commit()
+            self.db.refresh(product)
+            return product
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def delete(self, product_id: int) -> bool:
         """Soft delete product by setting is_active to False."""
@@ -158,9 +166,13 @@ class ProductRepository:
         if not product:
             return False
 
-        product.is_active = False
-        self.db.commit()
-        return True
+        try:
+            product.is_active = False
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def hard_delete(self, product_id: int) -> bool:
         """Permanently delete product."""
@@ -168,9 +180,13 @@ class ProductRepository:
         if not product:
             return False
 
-        self.db.delete(product)
-        self.db.commit()
-        return True
+        try:
+            self.db.delete(product)
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def sku_exists(self, sku: str, exclude_id: int = None) -> bool:
         """Check if SKU already exists."""

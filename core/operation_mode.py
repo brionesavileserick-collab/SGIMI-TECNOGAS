@@ -31,6 +31,7 @@ Usage
 from __future__ import annotations
 from typing import Optional
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ class _OperationMode:
         self._branch_id: Optional[int] = None
         self._branch_name: Optional[str] = None
         self._callbacks: list = []
+        self._lock = threading.Lock()
 
     # ── Properties ──────────────────────────────────────────────────────
     @property
@@ -123,18 +125,24 @@ class _OperationMode:
         Register *callback* to be called whenever the mode changes.
         callback signature: callback(mode: str, branch_id: int | None)
         """
-        if callback not in self._callbacks:
-            self._callbacks.append(callback)
+        with self._lock:
+            if callback not in self._callbacks:
+                self._callbacks.append(callback)
 
     def unsubscribe(self, callback) -> None:
         """Remove a previously registered callback."""
-        try:
-            self._callbacks.remove(callback)
-        except ValueError:
-            pass
+        with self._lock:
+            try:
+                self._callbacks.remove(callback)
+            except ValueError:
+                pass
 
     def _notify(self) -> None:
-        for cb in list(self._callbacks):
+        # Create a snapshot of callbacks to avoid race conditions
+        with self._lock:
+            callbacks_snapshot = list(self._callbacks)
+
+        for cb in callbacks_snapshot:
             try:
                 cb(self._mode, self._branch_id)
             except Exception as exc:

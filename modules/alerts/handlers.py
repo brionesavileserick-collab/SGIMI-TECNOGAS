@@ -48,6 +48,7 @@ class AlertHandlers:
         self.service = AlertService(db)
         self._on_new_alert = on_new_alert
         self._expiration_timer: Optional[threading.Timer] = None
+        self._is_active = True  # Flag to prevent timer execution after cleanup
         self._register_handlers()
         self._start_expiration_timer()
         logger.info("Alert handlers registered")
@@ -440,6 +441,11 @@ class AlertHandlers:
         Mark overdue alerts and escalate them, then reschedule itself.
         Runs in a background daemon thread.
         """
+        # Check if handler is still active before executing
+        if not self._is_active:
+            logger.debug("Expiration check skipped: handler no longer active")
+            return
+
         try:
             count = self.service.mark_expired_alerts()
             if count:
@@ -453,7 +459,7 @@ class AlertHandlers:
             logger.error(f"Error in expiration check: {e}")
         finally:
             # Reschedule unless unregistered
-            if self._expiration_timer is not None:
+            if self._is_active and self._expiration_timer is not None:
                 self._start_expiration_timer()
 
     # ------------------------------------------------------------------ #
@@ -462,6 +468,9 @@ class AlertHandlers:
 
     def unregister_handlers(self):
         """Unregister all event handlers and cancel the expiration timer."""
+        # Set flag to prevent timer from rescheduling
+        self._is_active = False
+
         # Cancel timer
         if self._expiration_timer is not None:
             self._expiration_timer.cancel()

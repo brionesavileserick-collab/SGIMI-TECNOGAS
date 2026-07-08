@@ -2,9 +2,9 @@
 Branch model for multi-branch inventory management.
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, event
 from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 from core.database import Base
 
 
@@ -19,6 +19,8 @@ OPERATIONAL_STATUS_VALUES = (
 )
 
 COUNT_FREQUENCY_VALUES = (
+    "diario",
+    "semanal",
     "mensual",
     "bimestral",
     "trimestral",
@@ -125,6 +127,37 @@ class Branch(Base):
         foreign_keys=[manager_user_id],
         lazy="select",
     )
+
+    # ------------------------------------------------------------------
+    # Validators
+    # ------------------------------------------------------------------
+    @validates('operational_status')
+    def validate_operational_status(self, key, value):
+        if value not in OPERATIONAL_STATUS_VALUES:
+            raise ValueError(
+                f"operational_status must be one of {OPERATIONAL_STATUS_VALUES}, got '{value}'"
+            )
+        return value
+
+    @validates('count_frequency')
+    def validate_count_frequency(self, key, value):
+        if value is not None and value not in COUNT_FREQUENCY_VALUES:
+            raise ValueError(
+                f"count_frequency must be one of {COUNT_FREQUENCY_VALUES}, got '{value}'"
+            )
+        return value
+
+    @validates('timezone')
+    def validate_timezone(self, key, value):
+        if value is not None:
+            # Basic validation for common timezone format
+            # Accepts: "America/Mexico_City", "UTC", "Europe/Madrid", etc.
+            if not isinstance(value, str) or len(value) < 3:
+                raise ValueError(f"timezone must be a valid timezone string, got '{value}'")
+            # Check for basic IANA timezone format (Region/City or UTC)
+            if not (value == "UTC" or "/" in value):
+                raise ValueError(f"timezone must be in IANA format (e.g., 'America/Mexico_City'), got '{value}'")
+        return value
 
     # ------------------------------------------------------------------
     def __repr__(self):

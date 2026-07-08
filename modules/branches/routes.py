@@ -42,6 +42,8 @@ STATUS_COLORS: Dict[str, str] = {
     "en_renovacion":         "#1565c0",   # blue
 }
 FREQUENCY_LABELS: Dict[str, str] = {
+    "diario":     "Diario",
+    "semanal":    "Semanal",
     "mensual":    "Mensual",
     "bimestral":  "Bimestral",
     "trimestral": "Trimestral",

@@ -16,11 +16,15 @@ class UserRepository:
 
     def create(self, user_data: dict) -> User:
         """Create a new user."""
-        user = User(**user_data)
-        self.db.add(user)
-        self.db.commit()
-        self.db.refresh(user)
-        return user
+        try:
+            user = User(**user_data)
+            self.db.add(user)
+            self.db.commit()
+            self.db.refresh(user)
+            return user
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def get_by_id(self, user_id: int) -> Optional[User]:
         """Get user by ID."""
@@ -70,13 +74,17 @@ class UserRepository:
         if not user:
             return None
 
-        for key, value in update_data.items():
-            if hasattr(user, key):
-                setattr(user, key, value)
+        try:
+            for key, value in update_data.items():
+                if hasattr(user, key):
+                    setattr(user, key, value)
 
-        self.db.commit()
-        self.db.refresh(user)
-        return user
+            self.db.commit()
+            self.db.refresh(user)
+            return user
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def delete(self, user_id: int) -> bool:
         """Soft delete user by setting is_active to False."""
@@ -84,9 +92,13 @@ class UserRepository:
         if not user:
             return False
 
-        user.is_active = False
-        self.db.commit()
-        return True
+        try:
+            user.is_active = False
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def hard_delete(self, user_id: int) -> bool:
         """Permanently delete user."""
@@ -94,9 +106,13 @@ class UserRepository:
         if not user:
             return False
 
-        self.db.delete(user)
-        self.db.commit()
-        return True
+        try:
+            self.db.delete(user)
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def email_exists(self, email: str, exclude_id: int = None) -> bool:
         """Check if email already exists."""

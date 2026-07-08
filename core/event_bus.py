@@ -4,7 +4,7 @@ Provides publish/subscribe pattern for decoupled module communication.
 """
 
 from typing import Callable, Dict, List, Any
-from collections import defaultdict
+from collections import defaultdict, deque
 import logging
 
 logger = logging.getLogger(__name__)
@@ -16,9 +16,10 @@ class EventBus:
     Implements a simple publish/subscribe pattern.
     """
 
-    def __init__(self):
+    def __init__(self, max_history_size: int = 1000):
         self._handlers: Dict[str, List[Callable]] = defaultdict(list)
-        self._event_history: List[Dict[str, Any]] = []
+        self._event_history: deque = deque(maxlen=max_history_size)
+        self._max_history_size = max_history_size
 
     def subscribe(self, event: str, handler: Callable) -> None:
         """

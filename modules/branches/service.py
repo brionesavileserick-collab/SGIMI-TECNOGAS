@@ -771,6 +771,8 @@ class BranchService:
 
     # Mapping: count_frequency value → number of days between counts
     _FREQUENCY_DAYS: Dict[str, int] = {
+        "diario":     1,
+        "semanal":    7,
         "mensual":    30,
         "bimestral":  60,
         "trimestral": 90,

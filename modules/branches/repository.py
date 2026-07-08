@@ -23,11 +23,23 @@ class BranchRepository:
 
     def create(self, branch_data: dict) -> Branch:
         """Create a new branch."""
-        branch = Branch(**branch_data)
-        self.db.add(branch)
-        self.db.commit()
-        self.db.refresh(branch)
-        return branch
+        # Validate manager_user_id if provided
+        if "manager_user_id" in branch_data and branch_data["manager_user_id"]:
+            manager = self.db.query(User).filter(User.id == branch_data["manager_user_id"]).first()
+            if not manager:
+                raise ValueError(f"Manager user with id {branch_data['manager_user_id']} does not exist")
+            if not manager.is_active:
+                raise ValueError(f"Manager user with id {branch_data['manager_user_id']} is not active")
+
+        try:
+            branch = Branch(**branch_data)
+            self.db.add(branch)
+            self.db.commit()
+            self.db.refresh(branch)
+            return branch
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def get_by_id(self, branch_id: int) -> Optional[Branch]:
         """Get branch by ID."""
@@ -83,13 +95,25 @@ class BranchRepository:
         if not branch:
             return None
 
-        for key, value in update_data.items():
-            if hasattr(branch, key):
-                setattr(branch, key, value)
+        # Validate manager_user_id if being updated
+        if "manager_user_id" in update_data and update_data["manager_user_id"]:
+            manager = self.db.query(User).filter(User.id == update_data["manager_user_id"]).first()
+            if not manager:
+                raise ValueError(f"Manager user with id {update_data['manager_user_id']} does not exist")
+            if not manager.is_active:
+                raise ValueError(f"Manager user with id {update_data['manager_user_id']} is not active")
 
-        self.db.commit()
-        self.db.refresh(branch)
-        return branch
+        try:
+            for key, value in update_data.items():
+                if hasattr(branch, key):
+                    setattr(branch, key, value)
+
+            self.db.commit()
+            self.db.refresh(branch)
+            return branch
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def delete(self, branch_id: int) -> bool:
         """Soft delete branch by setting is_active to False."""
@@ -97,9 +121,13 @@ class BranchRepository:
         if not branch:
             return False
 
-        branch.is_active = False
-        self.db.commit()
-        return True
+        try:
+            branch.is_active = False
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def hard_delete(self, branch_id: int) -> bool:
         """Permanently delete branch."""
@@ -107,9 +135,13 @@ class BranchRepository:
         if not branch:
             return False
 
-        self.db.delete(branch)
-        self.db.commit()
-        return True
+        try:
+            self.db.delete(branch)
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def name_exists(self, name: str, exclude_id: int = None) -> bool:
         """Check if name already exists."""
@@ -462,20 +494,28 @@ class BranchRepository:
         branch = self.get_by_id(branch_id)
         if not branch:
             return None
-        branch.next_scheduled_count = next_date
-        self.db.commit()
-        self.db.refresh(branch)
-        return branch
+        try:
+            branch.next_scheduled_count = next_date
+            self.db.commit()
+            self.db.refresh(branch)
+            return branch
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def update_last_count_date(self, branch_id: int, count_date) -> Optional[Branch]:
         """Record the date of the last completed inventory count."""
         branch = self.get_by_id(branch_id)
         if not branch:
             return None
-        branch.last_count_date = count_date
-        self.db.commit()
-        self.db.refresh(branch)
-        return branch
+        try:
+            branch.last_count_date = count_date
+            self.db.commit()
+            self.db.refresh(branch)
+            return branch
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     # ------------------------------------------------------------------
     # Expansión 8 – Historial de configuración
@@ -493,18 +533,22 @@ class BranchRepository:
         """Append one row to branch_config_history."""
         from models.branch_config_history import BranchConfigHistory
 
-        entry = BranchConfigHistory(
-            branch_id=branch_id,
-            changed_by=changed_by,
-            field_name=field_name,
-            old_value=str(old_value) if old_value is not None else None,
-            new_value=str(new_value) if new_value is not None else None,
-            reason=reason,
-        )
-        self.db.add(entry)
-        self.db.commit()
-        self.db.refresh(entry)
-        return entry
+        try:
+            entry = BranchConfigHistory(
+                branch_id=branch_id,
+                changed_by=changed_by,
+                field_name=field_name,
+                old_value=str(old_value) if old_value is not None else None,
+                new_value=str(new_value) if new_value is not None else None,
+                reason=reason,
+            )
+            self.db.add(entry)
+            self.db.commit()
+            self.db.refresh(entry)
+            return entry
+        except Exception as e:
+            self.db.rollback()
+            raise
 
     def get_branch_config_history(
         self, branch_id: int, limit: int = 100
