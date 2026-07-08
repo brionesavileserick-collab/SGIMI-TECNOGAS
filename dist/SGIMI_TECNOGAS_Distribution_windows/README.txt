@@ -1,4 +1,4 @@
-﻿# SGIMI TECNOGAS
+# SGIMI TECNOGAS
 ## Sistema de Gestion de Inventario Multi-Sucursal
 
 ### Instalacion

@@ -240,7 +240,11 @@ def create_distribution_package(target=None, onefile=False):
     dist_dir = Path(f'dist/{APP_NAME}_Distribution_{target}')
     
     output_name = get_output_name(target)
-    exe_path = dist_dir / output_name
+    # For onedir builds, executable is in a subdirectory named after the app
+    if onefile:
+        exe_path = dist_dir / output_name
+    else:
+        exe_path = dist_dir / APP_NAME / output_name
 
     if not exe_path.exists():
         print("No executable found. Build first.")
