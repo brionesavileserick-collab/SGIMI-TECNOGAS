@@ -28,11 +28,15 @@ import csv
 import io
 import json
 import logging
+import os
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func, or_
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func, or_
 from sqlalchemy.orm import Session
+
+from core.database import Base
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +68,57 @@ def _flatten_dict(d: Dict, parent_key: str = "", sep: str = ".") -> Dict:
 # Service class
 # ══════════════════════════════════════════════════════════════════════════════
 
+class ReportSchedule(Base):
+    """Simple persisted definition for recurring report schedules."""
+
+    __tablename__ = "report_schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    report_type = Column(String(50), nullable=False)
+    schedule_type = Column(String(20), nullable=False)
+    schedule_time = Column(String(5), nullable=False)
+    schedule_day_of_week = Column(Integer, nullable=True)
+    schedule_day_of_month = Column(Integer, nullable=True)
+    parameters = Column(Text, nullable=True)
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    next_run_at = Column(DateTime(timezone=True), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_by_user_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "report_type": self.report_type,
+            "schedule_type": self.schedule_type,
+            "schedule_time": self.schedule_time,
+            "schedule_day_of_week": self.schedule_day_of_week,
+            "schedule_day_of_month": self.schedule_day_of_month,
+            "parameters": json.loads(self.parameters or "{}") if self.parameters else {},
+            "last_run_at": _fmt_date(self.last_run_at),
+            "next_run_at": _fmt_date(self.next_run_at),
+            "is_active": self.is_active,
+            "created_by_user_id": self.created_by_user_id,
+            "created_at": _fmt_date(self.created_at),
+        }
+
+
 class ReportsService:
     """Service for generating, exporting, and persisting reports."""
 
     def __init__(self, db: Session):
         self.db = db
+        self._ensure_schedule_table()
+
+    def _ensure_schedule_table(self) -> None:
+        if not self.db or not self.db.bind:
+            return
+        try:
+            ReportSchedule.__table__.create(self.db.bind, checkfirst=True)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Could not ensure report_schedules table: %s", exc)
 
     # ─────────────────────────────────────────────────────────────────────────
     # EXP 1-3 · REPORTES BASE (con filtros extendidos)
@@ -516,8 +566,931 @@ class ReportsService:
         return filename
 
     # ─────────────────────────────────────────────────────────────────────────
-    # EXP 6 · VISTA FORMATEADA
+    # EXP 6 · REPORTES ADICIONALES / OPCIONALES
     # ─────────────────────────────────────────────────────────────────────────
+
+    def generate_count_session_report(
+        self,
+        branch_id: Optional[int] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        status: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate a report of inventory count sessions and their outcomes."""
+        from models.branch import Branch
+        from models.inventory_count_item import InventoryCountItem
+        from models.inventory_count_session import InventoryCountSession
+
+        try:
+            query = self.db.query(InventoryCountSession)
+            if branch_id:
+                query = query.filter(InventoryCountSession.branch_id == branch_id)
+            if date_from:
+                query = query.filter(InventoryCountSession.scheduled_date >= date_from)
+            if date_to:
+                query = query.filter(InventoryCountSession.scheduled_date <= date_to)
+            if status:
+                query = query.filter(InventoryCountSession.status == status)
+
+            sessions = query.order_by(InventoryCountSession.scheduled_date.desc()).all()
+
+            branch_cache: Dict[int, str] = {}
+            rows: List[Dict[str, Any]] = []
+            summary = {
+                "total_sessions": len(sessions),
+                "completed": 0,
+                "in_progress": 0,
+                "pending": 0,
+                "total_items_counted": 0,
+                "total_discrepancies_found": 0,
+            }
+            by_branch: Dict[str, Dict[str, Any]] = {}
+
+            for session in sessions:
+                if session.status == "completed":
+                    summary["completed"] += 1
+                elif session.status == "in_progress":
+                    summary["in_progress"] += 1
+                elif session.status == "pending":
+                    summary["pending"] += 1
+                elif session.status == "cancelled":
+                    summary["pending"] += 0
+
+                branch_name = "Sin sucursal"
+                if session.branch_id:
+                    branch_name = branch_cache.get(session.branch_id)
+                    if branch_name is None:
+                        branch = self.db.query(Branch).filter(Branch.id == session.branch_id).first()
+                        branch_name = branch.name if branch else "Sin sucursal"
+                        branch_cache[session.branch_id] = branch_name
+
+                items = list(session.count_items or [])
+                items_total = len(items)
+                discrepancies = sum(1 for item in items if getattr(item, "is_discrepancy", False))
+
+                summary["total_items_counted"] += items_total
+                summary["total_discrepancies_found"] += discrepancies
+
+                by_branch.setdefault(branch_name, {
+                    "sessions": 0,
+                    "items_counted": 0,
+                    "discrepancies": 0,
+                })
+                by_branch[branch_name]["sessions"] += 1
+                by_branch[branch_name]["items_counted"] += items_total
+                by_branch[branch_name]["discrepancies"] += discrepancies
+
+                rows.append({
+                    "session_id": session.id,
+                    "branch_name": branch_name,
+                    "scheduled_date": _fmt_date(session.scheduled_date),
+                    "status": session.status,
+                    "completed_at": _fmt_date(session.completed_at),
+                    "validator_count": session.validator_count,
+                    "items_total": items_total,
+                    "items_with_discrepancy": discrepancies,
+                })
+
+            return {
+                "generated_at": _fmt_date(datetime.now()),
+                "filters": {
+                    "branch_id": branch_id,
+                    "date_from": _fmt_date(date_from),
+                    "date_to": _fmt_date(date_to),
+                    "status": status,
+                },
+                "summary": summary,
+                "by_branch": by_branch,
+                "sessions": rows,
+            }
+        except Exception:
+            return {
+                "generated_at": _fmt_date(datetime.now()),
+                "filters": {
+                    "branch_id": branch_id,
+                    "date_from": _fmt_date(date_from),
+                    "date_to": _fmt_date(date_to),
+                    "status": status,
+                },
+                "summary": {
+                    "total_sessions": 0,
+                    "completed": 0,
+                    "in_progress": 0,
+                    "pending": 0,
+                    "total_items_counted": 0,
+                    "total_discrepancies_found": 0,
+                },
+                "by_branch": {},
+                "sessions": [],
+            }
+
+    def generate_approval_report(
+        self,
+        branch_id: Optional[int] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        approval_level: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate a report of transfer approvals and pending requests."""
+        from models.branch import Branch
+        from models.movement import Movement
+        from models.product import Product
+
+        try:
+            query = self.db.query(Movement).filter(Movement.movement_type == "transferencia")
+            if branch_id:
+                query = query.filter(or_(Movement.branch_id == branch_id, Movement.destination_branch_id == branch_id))
+            if date_from:
+                query = query.filter(Movement.created_at >= date_from)
+            if date_to:
+                query = query.filter(Movement.created_at <= date_to)
+            if approval_level:
+                query = query.filter(Movement.approval_level == approval_level)
+
+            movements = query.order_by(Movement.created_at.desc()).all()
+            now = datetime.now()
+            pending_rows: List[Dict[str, Any]] = []
+            by_approver: Dict[str, Dict[str, int]] = {}
+            completed_hours: List[float] = []
+
+            for movement in movements:
+                product_name = "—"
+                product = self.db.query(Product).filter(Product.id == movement.product_id).first()
+                if product:
+                    product_name = product.name
+
+                origin_branch = "—"
+                destination_branch = "—"
+                origin = self.db.query(Branch).filter(Branch.id == movement.branch_id).first()
+                destination = self.db.query(Branch).filter(Branch.id == movement.destination_branch_id).first()
+                if origin:
+                    origin_branch = origin.name
+                if destination:
+                    destination_branch = destination.name
+
+                pending = False
+                if movement.requires_approval and movement.approval_level != "none":
+                    pending = True
+                if movement.requires_approval and not movement.admin_approved and movement.approval_level == "admin":
+                    pending = True
+                if movement.requires_approval and not movement.manager_approved and movement.approval_level == "manager":
+                    pending = True
+
+                if pending:
+                    pending_rows.append({
+                        "movement_id": movement.id,
+                        "product_name": product_name,
+                        "origin_branch": origin_branch,
+                        "destination_branch": destination_branch,
+                        "quantity": movement.quantity,
+                        "approval_level": movement.approval_level or "admin",
+                        "created_at": _fmt_date(movement.created_at),
+                        "waiting_hours": int((now - movement.created_at).total_seconds() // 3600) if movement.created_at else 0,
+                    })
+
+                if movement.admin_approved and movement.admin_approved_by:
+                    by_approver.setdefault(movement.admin_approved_by, {"approved": 0, "rejected": 0})
+                    by_approver[movement.admin_approved_by]["approved"] += 1
+                    if movement.admin_approved_at and movement.created_at:
+                        completed_hours.append((movement.admin_approved_at - movement.created_at).total_seconds() / 3600)
+                elif movement.manager_approved and movement.manager_approved_by:
+                    by_approver.setdefault(movement.manager_approved_by, {"approved": 0, "rejected": 0})
+                    by_approver[movement.manager_approved_by]["approved"] += 1
+                    if movement.manager_approved_at and movement.created_at:
+                        completed_hours.append((movement.manager_approved_at - movement.created_at).total_seconds() / 3600)
+                elif movement.state == "rechazado":
+                    approver_name = movement.validated_by or movement.admin_approved_by or movement.manager_approved_by or "system"
+                    by_approver.setdefault(str(approver_name), {"approved": 0, "rejected": 0})
+                    by_approver[str(approver_name)]["rejected"] += 1
+
+            return {
+                "generated_at": _fmt_date(datetime.now()),
+                "filters": {
+                    "branch_id": branch_id,
+                    "date_from": _fmt_date(date_from),
+                    "date_to": _fmt_date(date_to),
+                    "approval_level": approval_level,
+                },
+                "summary": {
+                    "total_transfer_requests": len(movements),
+                    "pending_admin": sum(1 for item in pending_rows if item["approval_level"] == "admin"),
+                    "pending_manager": sum(1 for item in pending_rows if item["approval_level"] == "manager"),
+                    "approved": sum(1 for movement in movements if movement.admin_approved or movement.manager_approved),
+                    "rejected": sum(1 for movement in movements if movement.state == "rechazado"),
+                    "average_approval_time_hours": round(sum(completed_hours) / len(completed_hours), 2) if completed_hours else 0.0,
+                },
+                "pending_approvals": pending_rows,
+                "by_approver": by_approver,
+            }
+        except Exception:
+            return {
+                "generated_at": _fmt_date(datetime.now()),
+                "filters": {
+                    "branch_id": branch_id,
+                    "date_from": _fmt_date(date_from),
+                    "date_to": _fmt_date(date_to),
+                    "approval_level": approval_level,
+                },
+                "summary": {
+                    "total_transfer_requests": 0,
+                    "pending_admin": 0,
+                    "pending_manager": 0,
+                    "approved": 0,
+                    "rejected": 0,
+                    "average_approval_time_hours": 0.0,
+                },
+                "pending_approvals": [],
+                "by_approver": {},
+            }
+
+    def generate_alert_report(
+        self,
+        branch_id: Optional[int] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        severity: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate alert history statistics."""
+        from modules.alerts.service import Alert, AlertService
+
+        try:
+            query = self.db.query(Alert)
+        except Exception:
+            return {
+                "generated_at": _fmt_date(datetime.now()),
+                "filters": {
+                    "branch_id": branch_id,
+                    "date_from": _fmt_date(date_from),
+                    "date_to": _fmt_date(date_to),
+                    "severity": severity,
+                },
+                "summary": {
+                    "total_alerts": 0,
+                    "by_severity": {},
+                    "by_type": {},
+                    "open_alerts": 0,
+                    "resolved_alerts": 0,
+                    "average_resolution_hours": 0.0,
+                },
+                "by_branch": {},
+                "top_open_alerts": [],
+            }
+        if branch_id:
+            query = query.filter(Alert.branch_id == branch_id)
+        if date_from:
+            query = query.filter(Alert.created_at >= date_from)
+        if date_to:
+            query = query.filter(Alert.created_at <= date_to)
+        if severity:
+            query = query.filter(Alert.severity == severity)
+
+        alerts = query.order_by(Alert.created_at.desc()).all()
+        alert_service = AlertService(self.db)
+        enriched = [alert_service.enrich_alert(alert.to_dict()) for alert in alerts]
+
+        by_severity: Dict[str, int] = {}
+        by_type: Dict[str, int] = {}
+        by_branch: Dict[str, Dict[str, Any]] = {}
+        resolution_hours: List[float] = []
+        top_open: List[Dict[str, Any]] = []
+        now = datetime.utcnow()
+
+        for alert in enriched:
+            severity_key = alert.get("severity") or "info"
+            type_key = alert.get("alert_type") or "unknown"
+            by_severity[severity_key] = by_severity.get(severity_key, 0) + 1
+            by_type[type_key] = by_type.get(type_key, 0) + 1
+
+            branch_name = alert.get("branch_name") or "Sin sucursal"
+            branch_entry = by_branch.setdefault(branch_name, {"total": 0, "open": 0, "critical_open": 0})
+            branch_entry["total"] += 1
+            if not alert.get("is_resolved"):
+                branch_entry["open"] += 1
+                if severity_key == "critical":
+                    branch_entry["critical_open"] += 1
+
+            if alert.get("is_resolved") and alert.get("resolved_at") and alert.get("created_at"):
+                try:
+                    resolved = datetime.fromisoformat(alert["resolved_at"].replace("Z", "+00:00"))
+                    created = datetime.fromisoformat(alert["created_at"].replace("Z", "+00:00"))
+                    resolution_hours.append((resolved - created).total_seconds() / 3600)
+                except Exception:
+                    pass
+
+            if not alert.get("is_resolved"):
+                created_at = alert.get("created_at")
+                try:
+                    created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00")) if created_at else now
+                    hours_open = round((now - created_dt.replace(tzinfo=None) if created_dt.tzinfo is None else now).total_seconds() / 3600)
+                except Exception:
+                    hours_open = 0
+                top_open.append({
+                    "alert_id": alert.get("id"),
+                    "type": type_key,
+                    "severity": severity_key,
+                    "product_name": alert.get("product_name") or "—",
+                    "branch_name": branch_name,
+                    "created_at": created_at,
+                    "hours_open": hours_open,
+                })
+
+        top_open.sort(key=lambda item: item["hours_open"], reverse=True)
+
+        return {
+            "generated_at": _fmt_date(datetime.now()),
+            "filters": {
+                "branch_id": branch_id,
+                "date_from": _fmt_date(date_from),
+                "date_to": _fmt_date(date_to),
+                "severity": severity,
+            },
+            "summary": {
+                "total_alerts": len(enriched),
+                "by_severity": dict(sorted(by_severity.items())),
+                "by_type": dict(sorted(by_type.items())),
+                "open_alerts": sum(1 for alert in enriched if not alert.get("is_resolved")),
+                "resolved_alerts": sum(1 for alert in enriched if alert.get("is_resolved")),
+                "average_resolution_hours": round(sum(resolution_hours) / len(resolution_hours), 2) if resolution_hours else 0.0,
+            },
+            "by_branch": by_branch,
+            "top_open_alerts": top_open[:10],
+        }
+
+    def generate_branch_capacity_report(self) -> Dict[str, Any]:
+        """Compare branch capacity usage and suggest redistribution opportunities."""
+        from models.branch import Branch
+        from models.inventory import Inventory
+
+        branches = self.db.query(Branch).filter(Branch.is_active == True).order_by(Branch.name).all()
+        rows: List[Dict[str, Any]] = []
+
+        for branch in branches:
+            inventory_items = self.db.query(Inventory).filter(Inventory.branch_id == branch.id, Inventory.is_active == True).all()
+            current_skus = len({item.product_id for item in inventory_items if item.product_id})
+            max_products = branch.max_products
+            usage_percent = round((current_skus / max_products) * 100, 2) if max_products else None
+            if max_products is None:
+                status = "no_limit"
+            elif usage_percent is None:
+                status = "no_limit"
+            elif usage_percent >= 90:
+                status = "critical"
+            elif usage_percent >= 70:
+                status = "warning"
+            else:
+                status = "ok"
+
+            last_update = None
+            for item in inventory_items:
+                candidate = item.last_count_date or item.updated_at
+                if candidate and (last_update is None or candidate > last_update):
+                    last_update = candidate
+
+            rows.append({
+                "branch_id": branch.id,
+                "branch_name": branch.name,
+                "current_skus": current_skus,
+                "max_products": max_products,
+                "usage_percent": usage_percent,
+                "status": status,
+                "last_inventory_update": _fmt_date(last_update),
+            })
+
+        suggestions: List[Dict[str, Any]] = []
+        critical_branches = [row for row in rows if row["status"] == "critical"]
+        low_usage_branches = [row for row in rows if row["status"] in ("ok", "warning") and row["usage_percent"] is not None and row["usage_percent"] < 60]
+        for source in critical_branches[:3]:
+            for target in low_usage_branches[:3]:
+                if source["branch_name"] != target["branch_name"]:
+                    suggestions.append({
+                        "from_branch": source["branch_name"],
+                        "to_branch": target["branch_name"],
+                        "reason": f"{source['branch_name']} al {source['usage_percent']}%, {target['branch_name']} al {target['usage_percent']}%",
+                    })
+
+        return {
+            "generated_at": _fmt_date(datetime.now()),
+            "summary": {
+                "total_branches": len(rows),
+                "with_capacity_limit": sum(1 for row in rows if row["max_products"] is not None),
+                "without_capacity_limit": sum(1 for row in rows if row["max_products"] is None),
+                "avg_usage_percent": round(sum(row["usage_percent"] or 0 for row in rows) / max(1, len(rows)), 2),
+            },
+            "branches": rows,
+            "transfer_suggestions": suggestions,
+        }
+
+    def generate_config_change_report(
+        self,
+        branch_id: Optional[int] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        entity_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate a report of configuration and product changes."""
+        from models.branch import Branch
+        from models.branch_config_history import BranchConfigHistory
+        from models.product import Product
+        from models.product_change_history import ProductChangeHistory
+        from modules.history.service import HistoryService
+
+        changes: List[Dict[str, Any]] = []
+
+        try:
+            self.db.query(BranchConfigHistory).count()
+        except Exception:
+            return {
+                "generated_at": _fmt_date(datetime.now()),
+                "filters": {
+                    "branch_id": branch_id,
+                    "date_from": _fmt_date(date_from),
+                    "date_to": _fmt_date(date_to),
+                    "entity_type": entity_type,
+                },
+                "summary": {"total_changes": 0, "by_entity_type": {}},
+                "changes": [],
+            }
+
+        if entity_type in (None, "branch_config"):
+            query = self.db.query(BranchConfigHistory)
+            if branch_id:
+                query = query.filter(BranchConfigHistory.branch_id == branch_id)
+            if date_from:
+                query = query.filter(BranchConfigHistory.changed_at >= date_from)
+            if date_to:
+                query = query.filter(BranchConfigHistory.changed_at <= date_to)
+            for record in query.order_by(BranchConfigHistory.changed_at.desc()).all():
+                branch_name = "—"
+                if record.branch_id:
+                    branch = self.db.query(Branch).filter(Branch.id == record.branch_id).first()
+                    branch_name = branch.name if branch else str(record.branch_id)
+                changes.append({
+                    "id": record.id,
+                    "entity_type": "branch_config",
+                    "entity_name": branch_name,
+                    "field_name": record.field_name,
+                    "old_value": record.old_value,
+                    "new_value": record.new_value,
+                    "changed_by": record.changed_by,
+                    "changed_at": _fmt_date(record.changed_at),
+                })
+
+        if entity_type in (None, "product"):
+            query = self.db.query(ProductChangeHistory)
+            if date_from:
+                query = query.filter(ProductChangeHistory.changed_at >= date_from)
+            if date_to:
+                query = query.filter(ProductChangeHistory.changed_at <= date_to)
+            for record in query.order_by(ProductChangeHistory.changed_at.desc()).all():
+                product_name = "—"
+                if record.product_id:
+                    product = self.db.query(Product).filter(Product.id == record.product_id).first()
+                    product_name = product.name if product else str(record.product_id)
+                changes.append({
+                    "id": record.id,
+                    "entity_type": "product",
+                    "entity_name": product_name,
+                    "field_name": record.field_name,
+                    "old_value": record.old_value,
+                    "new_value": record.new_value,
+                    "changed_by": record.changed_by_name,
+                    "changed_at": _fmt_date(record.changed_at),
+                })
+
+        if entity_type in (None, "branch"):
+            history_svc = HistoryService(self.db)
+            result = history_svc.list_history(
+                limit=500,
+                entity_type="branch",
+                branch_id=branch_id,
+                date_from=date_from,
+                date_to=date_to,
+                enrich=True,
+            )
+            for entry in result.get("entries", []):
+                changes.append({
+                    "id": entry.get("id"),
+                    "entity_type": "branch",
+                    "entity_name": entry.get("entity_name") or "—",
+                    "field_name": entry.get("event_type") or "—",
+                    "old_value": None,
+                    "new_value": None,
+                    "changed_by": entry.get("user_name"),
+                    "changed_at": entry.get("created_at"),
+                })
+
+        changes.sort(key=lambda item: item.get("changed_at") or "", reverse=True)
+        by_entity_type: Dict[str, int] = {}
+        for change in changes:
+            by_entity_type[change["entity_type"]] = by_entity_type.get(change["entity_type"], 0) + 1
+
+        return {
+            "generated_at": _fmt_date(datetime.now()),
+            "filters": {
+                "branch_id": branch_id,
+                "date_from": _fmt_date(date_from),
+                "date_to": _fmt_date(date_to),
+                "entity_type": entity_type,
+            },
+            "summary": {
+                "total_changes": len(changes),
+                "by_entity_type": by_entity_type,
+            },
+            "changes": changes,
+        }
+
+    def generate_batch_report(
+        self,
+        branch_id: Optional[int] = None,
+        days_until_expiry: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Generate an inventory batch report for expiring and expired lots."""
+        from models.branch import Branch
+        from models.inventory import Inventory
+        from models.inventory_batch import InventoryBatch
+        from models.product import Product
+
+        query = (
+            self.db.query(InventoryBatch)
+            .join(Inventory)
+            .join(Product)
+            .join(Branch)
+            .filter(
+                Inventory.is_active == True,
+                Product.is_active == True,
+                Branch.is_active == True,
+            )
+        )
+        if branch_id:
+            query = query.filter(Inventory.branch_id == branch_id)
+
+        batches = query.order_by(InventoryBatch.expiration_date.asc().nulls_last()).all()
+        today = datetime.now().date()
+        expiring_batches: List[Dict[str, Any]] = []
+        expired_batches: List[Dict[str, Any]] = []
+        by_branch: Dict[str, Dict[str, int]] = {}
+        total_quantity_at_risk = 0
+
+        for batch in batches:
+            inventory = self.db.query(Inventory).filter(Inventory.id == batch.inventory_id).first()
+            branch_name = "Sin sucursal"
+            if inventory and inventory.branch_id:
+                branch = self.db.query(Branch).filter(Branch.id == inventory.branch_id).first()
+                branch_name = branch.name if branch else "Sin sucursal"
+            if inventory and inventory.product_id:
+                product = self.db.query(Product).filter(Product.id == inventory.product_id).first()
+                product_name = product.name if product else "—"
+            else:
+                product_name = "—"
+
+            if not batch.expiration_date:
+                continue
+
+            days = (batch.expiration_date - today).days
+            if days < 0:
+                expired_batches.append({
+                    "batch_id": batch.id,
+                    "batch_number": batch.batch_number,
+                    "product_name": product_name,
+                    "branch_name": branch_name,
+                    "expiration_date": batch.expiration_date.isoformat(),
+                    "days_until_expiry": days,
+                    "quantity": batch.quantity,
+                })
+                total_quantity_at_risk += batch.quantity
+                by_branch.setdefault(branch_name, {"total": 0, "expiring": 0, "expired": 0})
+                by_branch[branch_name]["expired"] += 1
+            elif days_until_expiry is None or days <= days_until_expiry:
+                expiring_batches.append({
+                    "batch_id": batch.id,
+                    "batch_number": batch.batch_number,
+                    "product_name": product_name,
+                    "branch_name": branch_name,
+                    "expiration_date": batch.expiration_date.isoformat(),
+                    "days_until_expiry": days,
+                    "quantity": batch.quantity,
+                })
+                total_quantity_at_risk += batch.quantity
+                by_branch.setdefault(branch_name, {"total": 0, "expiring": 0, "expired": 0})
+                by_branch[branch_name]["expiring"] += 1
+
+            by_branch.setdefault(branch_name, {"total": 0, "expiring": 0, "expired": 0})
+            by_branch[branch_name]["total"] += 1
+
+        return {
+            "generated_at": _fmt_date(datetime.now()),
+            "filters": {"branch_id": branch_id, "days_until_expiry": days_until_expiry},
+            "summary": {
+                "total_batches": len(batches),
+                "expiring_soon": len(expiring_batches),
+                "expired": len(expired_batches),
+                "total_quantity_at_risk": total_quantity_at_risk,
+            },
+            "expiring_batches": expiring_batches,
+            "expired_batches": expired_batches,
+            "by_branch": by_branch,
+        }
+
+    def generate_kit_report(self, branch_id: Optional[int] = None) -> Dict[str, Any]:
+        """Generate a report of products that are kits and their components."""
+        from models.inventory import Inventory
+        from models.product import Product
+
+        query = self.db.query(Product).filter(Product.is_active == True, Product.is_kit == True).order_by(Product.name)
+        if branch_id:
+            query = query.filter(Product.is_active == True)
+
+        kits: List[Dict[str, Any]] = []
+        total_components = 0
+        for product in query.all():
+            components = []
+            for component in product.kit_components:
+                total_components += 1
+                components.append({
+                    "name": component.component_product.name if component.component_product else "—",
+                    "sku": component.component_product.sku if component.component_product else "—",
+                    "quantity_needed": component.quantity,
+                })
+
+            if branch_id:
+                inventory_item = self.db.query(Inventory).filter(Inventory.branch_id == branch_id, Inventory.product_id == product.id).first()
+                total_stock_kit = inventory_item.digital_stock if inventory_item else 0
+            else:
+                total_stock_kit = self.db.query(func.sum(Inventory.digital_stock)).filter(Inventory.product_id == product.id, Inventory.is_active == True).scalar() or 0
+
+            if total_stock_kit <= 0:
+                stock_status = "out"
+            elif total_stock_kit < max(1, len(components)):
+                stock_status = "low"
+            else:
+                stock_status = "ok"
+
+            kits.append({
+                "product_name": product.name,
+                "sku": product.sku,
+                "components": components,
+                "total_stock_kit": int(total_stock_kit),
+                "stock_status": stock_status,
+            })
+
+        return {
+            "generated_at": _fmt_date(datetime.now()),
+            "summary": {
+                "total_kits": len(kits),
+                "total_components": total_components,
+            },
+            "kits": kits,
+        }
+
+    def generate_abc_analysis_report(
+        self,
+        branch_id: Optional[int] = None,
+        days_without_movement: int = 90,
+    ) -> Dict[str, Any]:
+        """Generate ABC product classification and dead stock analysis."""
+        from models.branch import Branch
+        from models.inventory import Inventory
+        from models.movement import Movement
+        from models.product import Product
+
+        query = (
+            self.db.query(Inventory)
+            .join(Product)
+            .join(Branch)
+            .filter(
+                Inventory.is_active == True,
+                Product.is_active == True,
+                Branch.is_active == True,
+            )
+        )
+        if branch_id:
+            query = query.filter(Inventory.branch_id == branch_id)
+
+        inventory_items = query.all()
+        product_values: Dict[int, Dict[str, Any]] = {}
+        for item in inventory_items:
+            value = item.digital_stock * (item.unit_cost if item.unit_cost is not None else item.product.unit_price or 0)
+            entry = product_values.setdefault(item.product_id, {
+                "product_name": item.product.name,
+                "sku": item.product.sku,
+                "total_value": 0.0,
+                "current_stock": 0,
+            })
+            entry["total_value"] += value
+            entry["current_stock"] += item.digital_stock
+
+        ranked_products = sorted(product_values.values(), key=lambda item: item["total_value"], reverse=True)
+        total_value = sum(item["total_value"] for item in ranked_products)
+        class_a_products: List[Dict[str, Any]] = []
+        class_b_products: List[Dict[str, Any]] = []
+        class_c_products: List[Dict[str, Any]] = []
+        cumulative_value = 0.0
+
+        for item in ranked_products:
+            percent_of_total = round((item["total_value"] / total_value * 100) if total_value else 0.0, 2)
+            cumulative_value += item["total_value"]
+            if cumulative_value <= total_value * 0.8:
+                class_name = "A"
+                class_a_products.append({"product_name": item["product_name"], "sku": item["sku"], "total_value": round(item["total_value"], 2), "percent_of_total": percent_of_total})
+            elif cumulative_value <= total_value * 0.95:
+                class_name = "B"
+                class_b_products.append({"product_name": item["product_name"], "sku": item["sku"], "total_value": round(item["total_value"], 2), "percent_of_total": percent_of_total})
+            else:
+                class_name = "C"
+                class_c_products.append({"product_name": item["product_name"], "sku": item["sku"], "total_value": round(item["total_value"], 2), "percent_of_total": percent_of_total})
+
+        cutoff = datetime.now() - timedelta(days=days_without_movement)
+        dead_stock: List[Dict[str, Any]] = []
+        for product_id, data in product_values.items():
+            if data["current_stock"] <= 0:
+                continue
+            has_movement = self.db.query(Movement).filter(
+                Movement.product_id == product_id,
+                Movement.created_at >= cutoff,
+            ).first() is not None
+            if not has_movement:
+                dead_stock.append({
+                    "product_name": data["product_name"],
+                    "sku": data["sku"],
+                    "days_without_movement": days_without_movement,
+                    "current_stock": data["current_stock"],
+                })
+
+        return {
+            "generated_at": _fmt_date(datetime.now()),
+            "filters": {"days_without_movement": days_without_movement},
+            "summary": {
+                "class_a_count": len(class_a_products),
+                "class_b_count": len(class_b_products),
+                "class_c_count": len(class_c_products),
+                "dead_stock_count": len(dead_stock),
+                "dead_stock_value": round(sum(item["total_value"] for item in ranked_products if item["product_name"] in {d["product_name"] for d in dead_stock}), 2),
+            },
+            "class_a_products": class_a_products,
+            "dead_stock": dead_stock,
+        }
+
+    def create_report_schedule(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new recurring report schedule."""
+        self._ensure_schedule_table()
+        payload = data or {}
+        name = (payload.get("name") or "").strip()
+        report_type = (payload.get("report_type") or "").strip()
+        schedule_type = (payload.get("schedule_type") or "daily").strip()
+        schedule_time = (payload.get("schedule_time") or "00:00").strip()
+        if not name or not report_type:
+            raise ValueError("name y report_type son obligatorios")
+
+        schedule = ReportSchedule(
+            name=name,
+            report_type=report_type,
+            schedule_type=schedule_type,
+            schedule_time=schedule_time,
+            schedule_day_of_week=payload.get("schedule_day_of_week"),
+            schedule_day_of_month=payload.get("schedule_day_of_month"),
+            parameters=json.dumps(payload.get("parameters") or {}, ensure_ascii=False),
+            created_by_user_id=payload.get("created_by_user_id"),
+            is_active=bool(payload.get("is_active", True)),
+        )
+        schedule.next_run_at = self._calculate_next_run(schedule)
+        self.db.add(schedule)
+        self.db.commit()
+        self.db.refresh(schedule)
+        return schedule.to_dict()
+
+    def update_report_schedule(self, schedule_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update an existing report schedule."""
+        self._ensure_schedule_table()
+        schedule = self.db.query(ReportSchedule).filter(ReportSchedule.id == schedule_id).first()
+        if not schedule:
+            return None
+        payload = data or {}
+        for field in ("name", "report_type", "schedule_type", "schedule_time", "schedule_day_of_week", "schedule_day_of_month", "is_active"):
+            if field in payload:
+                setattr(schedule, field, payload[field])
+        if "parameters" in payload:
+            schedule.parameters = json.dumps(payload["parameters"] or {}, ensure_ascii=False)
+        schedule.next_run_at = self._calculate_next_run(schedule)
+        self.db.commit()
+        self.db.refresh(schedule)
+        return schedule.to_dict()
+
+    def delete_report_schedule(self, schedule_id: int) -> bool:
+        """Delete a report schedule."""
+        self._ensure_schedule_table()
+        schedule = self.db.query(ReportSchedule).filter(ReportSchedule.id == schedule_id).first()
+        if not schedule:
+            return False
+        self.db.delete(schedule)
+        self.db.commit()
+        return True
+
+    def list_report_schedules(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
+        """List report schedules."""
+        self._ensure_schedule_table()
+        query = self.db.query(ReportSchedule)
+        if not include_inactive:
+            query = query.filter(ReportSchedule.is_active == True)
+        return [schedule.to_dict() for schedule in query.order_by(ReportSchedule.created_at.desc()).all()]
+
+    def run_report_schedule(self, schedule_id: int) -> Dict[str, Any]:
+        """Run a scheduled report now and persist its output to disk."""
+        self._ensure_schedule_table()
+        schedule = self.db.query(ReportSchedule).filter(ReportSchedule.id == schedule_id).first()
+        if not schedule:
+            raise ValueError(f"Schedule {schedule_id} not found")
+
+        report_type = schedule.report_type
+        params = json.loads(schedule.parameters or "{}") if schedule.parameters else {}
+        report_data = self._generate_report_data(report_type, params)
+        file_name = self._generate_scheduled_report_name(schedule, datetime.now())
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated_reports")
+        os.makedirs(output_dir, exist_ok=True)
+        file_path = os.path.join(output_dir, f"{file_name}.txt")
+        with open(file_path, "w", encoding="utf-8") as fh:
+            fh.write(self.format_report_for_display(report_type, report_data))
+
+        schedule.last_run_at = datetime.now()
+        schedule.next_run_at = self._calculate_next_run(schedule)
+        self.db.commit()
+        self.db.refresh(schedule)
+        return {"schedule_id": schedule.id, "report_type": report_type, "file_path": file_path, "name": file_name}
+
+    def process_due_schedules(self) -> int:
+        """Run every active schedule whose next execution time has arrived."""
+        self._ensure_schedule_table()
+        now = datetime.utcnow()
+        schedules = self.db.query(ReportSchedule).filter(ReportSchedule.is_active == True, ReportSchedule.next_run_at <= now).all()
+        for schedule in schedules:
+            try:
+                self.run_report_schedule(schedule.id)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Scheduled report failed for %s: %s", schedule.id, exc)
+        return len(schedules)
+
+    def _calculate_next_run(self, schedule: Any) -> Optional[datetime]:
+        if isinstance(schedule, dict):
+            schedule_type = (schedule.get("schedule_type") or "daily").lower()
+            schedule_time = schedule.get("schedule_time") or "00:00"
+            day_of_week = schedule.get("schedule_day_of_week")
+            day_of_month = schedule.get("schedule_day_of_month")
+        else:
+            schedule_type = (getattr(schedule, "schedule_type", "daily") or "daily").lower()
+            schedule_time = getattr(schedule, "schedule_time", "00:00") or "00:00"
+            day_of_week = getattr(schedule, "schedule_day_of_week", None)
+            day_of_month = getattr(schedule, "schedule_day_of_month", None)
+
+        hour, minute = map(int, str(schedule_time).split(":", 1))
+        base = datetime.utcnow().replace(second=0, microsecond=0)
+        candidate = base.replace(hour=hour, minute=minute)
+        if candidate <= base:
+            candidate = candidate + timedelta(days=1)
+
+        if schedule_type == "weekly":
+            target_weekday = int(day_of_week or base.weekday())
+            while candidate.weekday() != target_weekday:
+                candidate = candidate + timedelta(days=1)
+        elif schedule_type == "monthly":
+            day = int(day_of_month or base.day)
+            while candidate.day != day:
+                candidate = candidate + timedelta(days=1)
+                if candidate.month != base.month and candidate.day != day:
+                    break
+            if candidate.day != day:
+                candidate = candidate.replace(day=1) + timedelta(days=32)
+                candidate = candidate.replace(day=day)
+        return candidate
+
+    def _generate_scheduled_report_name(self, schedule: Any, generated_at: datetime) -> str:
+        base_name = re.sub(r"[^A-Za-z0-9]+", "_", getattr(schedule, "name", "reporte") or "reporte").strip("_").lower() or "reporte"
+        return f"{base_name}_{generated_at.strftime('%Y-%m-%d_%H-%M')}"
+
+    def _generate_report_data(self, report_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        branch_id = params.get("branch_id")
+        date_from = params.get("date_from")
+        date_to = params.get("date_to")
+        if isinstance(date_from, str):
+            date_from = datetime.fromisoformat(date_from)
+        if isinstance(date_to, str):
+            date_to = datetime.fromisoformat(date_to)
+
+        if report_type == "count_sessions":
+            return self.generate_count_session_report(branch_id=branch_id, date_from=date_from, date_to=date_to, status=params.get("status"))
+        if report_type == "approvals":
+            return self.generate_approval_report(branch_id=branch_id, date_from=date_from, date_to=date_to, approval_level=params.get("approval_level"))
+        if report_type == "alerts":
+            return self.generate_alert_report(branch_id=branch_id, date_from=date_from, date_to=date_to, severity=params.get("severity"))
+        if report_type == "branch_capacity":
+            return self.generate_branch_capacity_report()
+        if report_type == "config_changes":
+            return self.generate_config_change_report(branch_id=branch_id, date_from=date_from, date_to=date_to, entity_type=params.get("entity_type"))
+        if report_type == "batches":
+            return self.generate_batch_report(branch_id=branch_id, days_until_expiry=params.get("days_until_expiry"))
+        if report_type == "kits":
+            return self.generate_kit_report(branch_id=branch_id)
+        if report_type == "abc_analysis":
+            return self.generate_abc_analysis_report(branch_id=branch_id, days_without_movement=params.get("days_without_movement", 90))
+        raise ValueError(f"Tipo de reporte no soportado para programación: {report_type}")
 
     def format_report_for_display(
         self, report_type: str, report_data: Dict[str, Any]
@@ -577,6 +1550,14 @@ class ReportsService:
             "transfers": "Reporte de Transferencias",
             "trends": "Tendencias",
             "comparison": "Comparación de Períodos",
+            "count_sessions": "Conteos de Inventario",
+            "approvals": "Aprobaciones",
+            "alerts": "Historial de Alertas",
+            "branch_capacity": "Capacidad de Sucursal",
+            "config_changes": "Cambios de Configuración",
+            "batches": "Reporte de Lotes",
+            "kits": "Reporte de Kits",
+            "abc_analysis": "Análisis ABC y Dead Stock",
         }
         h1(TITLES.get(report_type, "Reporte"))
         kv("Generado en:", report_data.get("generated_at", "—"), indent=2)
@@ -802,6 +1783,93 @@ class ReportsService:
                         f"\n  … y {len(report_data['items']) - 200} registros más "
                         "(exporta a CSV/Excel para verlos todos)"
                     )
+
+        elif report_type == "count_sessions":
+            s = report_data.get("summary", {})
+            h2("Resumen")
+            kv("Total sesiones:", s.get("total_sessions", 0))
+            kv("Completadas:", s.get("completed", 0))
+            kv("En progreso:", s.get("in_progress", 0))
+            kv("Pendientes:", s.get("pending", 0))
+            kv("Ítems contados:", s.get("total_items_counted", 0))
+            kv("Discrepancias encontradas:", s.get("total_discrepancies_found", 0))
+            if report_data.get("sessions"):
+                h2("Sesiones")
+                table(
+                    ["ID", "Sucursal", "Fecha", "Estado", "Validador", "Ítems", "Discrepancias"],
+                    [[srow["session_id"], srow["branch_name"], srow["scheduled_date"], srow["status"], srow["validator_count"], srow["items_total"], srow["items_with_discrepancy"]] for srow in report_data["sessions"][:50]],
+                )
+
+        elif report_type == "approvals":
+            s = report_data.get("summary", {})
+            h2("Resumen")
+            kv("Solicitudes totales:", s.get("total_transfer_requests", 0))
+            kv("Pendientes admin:", s.get("pending_admin", 0))
+            kv("Pendientes manager:", s.get("pending_manager", 0))
+            kv("Aprobadas:", s.get("approved", 0))
+            kv("Rechazadas:", s.get("rejected", 0))
+            kv("Promedio horas aprobación:", s.get("average_approval_time_hours", 0))
+            if report_data.get("pending_approvals"):
+                h2("Pendientes de aprobación")
+                table(
+                    ["Movimiento", "Producto", "Origen", "Destino", "Cant.", "Nivel", "Creada", "Horas espera"],
+                    [[row["movement_id"], row["product_name"], row["origin_branch"], row["destination_branch"], row["quantity"], row["approval_level"], row["created_at"], row["waiting_hours"]] for row in report_data["pending_approvals"][:20]],
+                )
+
+        elif report_type == "alerts":
+            s = report_data.get("summary", {})
+            h2("Resumen")
+            kv("Total alertas:", s.get("total_alerts", 0))
+            kv("Abiertas:", s.get("open_alerts", 0))
+            kv("Resueltas:", s.get("resolved_alerts", 0))
+            kv("Promedio hrs. resolución:", s.get("average_resolution_hours", 0))
+            if report_data.get("top_open_alerts"):
+                h2("Alertas abiertas prioritarias")
+                table(
+                    ["ID", "Tipo", "Severidad", "Producto", "Sucursal", "Horas abiertas"],
+                    [[row["alert_id"], row["type"], row["severity"], row["product_name"], row["branch_name"], row["hours_open"]] for row in report_data["top_open_alerts"][:10]],
+                )
+
+        elif report_type == "branch_capacity":
+            h2("Capacidad por sucursal")
+            table(
+                ["Sucursal", "SKUs actuales", "Máx.", "Uso %", "Estado", "Última actualización"],
+                [[row["branch_name"], row["current_skus"], row["max_products"], row["usage_percent"], row["status"], row["last_inventory_update"]] for row in report_data.get("branches", [])],
+            )
+            if report_data.get("transfer_suggestions"):
+                h2("Sugerencias de transferencia")
+                table(["Desde", "Hacia", "Motivo"], [[row["from_branch"], row["to_branch"], row["reason"]] for row in report_data["transfer_suggestions"]])
+
+        elif report_type == "config_changes":
+            h2("Cambios de configuración")
+            table(["ID", "Entidad", "Campo", "Anterior", "Nuevo", "Cambio por", "Fecha"], [[row["id"], row["entity_name"], row["field_name"], row["old_value"], row["new_value"], row["changed_by"], row["changed_at"]] for row in report_data.get("changes", [])[:50]])
+
+        elif report_type == "batches":
+            h2("Lotes próximos a vencer")
+            table(["Lote", "Producto", "Sucursal", "Vence", "Días", "Cantidad"], [[row["batch_number"], row["product_name"], row["branch_name"], row["expiration_date"], row["days_until_expiry"], row["quantity"]] for row in report_data.get("expiring_batches", [])[:20]])
+            if report_data.get("expired_batches"):
+                h2("Lotes expirados")
+                table(["Lote", "Producto", "Sucursal", "Vence", "Días", "Cantidad"], [[row["batch_number"], row["product_name"], row["branch_name"], row["expiration_date"], row["days_until_expiry"], row["quantity"]] for row in report_data["expired_batches"][:20]])
+
+        elif report_type == "kits":
+            h2("Kits")
+            for kit in report_data.get("kits", []):
+                kv("Kit:", f"{kit['product_name']} ({kit['sku']})")
+                table(["Componente", "SKU", "Cantidad"], [[component["name"], component["sku"], component["quantity_needed"]] for component in kit.get("components", [])])
+
+        elif report_type == "abc_analysis":
+            s = report_data.get("summary", {})
+            h2("Resumen")
+            kv("Clases A:", s.get("class_a_count", 0))
+            kv("Clases B:", s.get("class_b_count", 0))
+            kv("Clases C:", s.get("class_c_count", 0))
+            kv("Dead stock:", s.get("dead_stock_count", 0))
+            if report_data.get("class_a_products"):
+                h2("Productos clase A")
+                table(["Producto", "SKU", "Valor total", "% total"], [[item["product_name"], item["sku"], f"${item['total_value']:,.2f}", item["percent_of_total"]] for item in report_data["class_a_products"][:20]])
+            if report_data.get("dead_stock"):
+                h2("Dead stock")
+                table(["Producto", "SKU", "Días sin movimiento", "Stock actual"], [[item["product_name"], item["sku"], item["days_without_movement"], item["current_stock"]] for item in report_data["dead_stock"][:20]])
 
         return "\n".join(lines)
 

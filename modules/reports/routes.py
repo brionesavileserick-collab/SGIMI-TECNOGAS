@@ -20,15 +20,16 @@ Expansiones implementadas
 
 import json
 import logging
+import threading
 from datetime import datetime
 
-from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtCore import QDate, Qt, QTime
 from PyQt6.QtWidgets import (
     QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
     QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTextEdit,
-    QVBoxLayout, QWidget,
+    QTimeEdit, QVBoxLayout, QWidget,
 )
 from sqlalchemy.orm import Session
 
@@ -52,7 +53,105 @@ _REPORT_TYPES = [
     ("Tendencias",             "trends",             False, False),
     ("Comparar Períodos",      "comparison",         False, False),
     ("Auditoría de Historial", "history_audit",      False, True),
+    ("Conteos de Inventario",  "count_sessions",     True,  False),
+    ("Aprobaciones",           "approvals",          True,  False),
+    ("Alertas",                "alerts",             True,  False),
+    ("Capacidad de Sucursal",  "branch_capacity",    False, False),
+    ("Cambios de Configuración","config_changes",    True,  False),
+    ("Lotes",                  "batches",            True,  False),
+    ("Kits",                   "kits",               False, False),
+    ("Análisis ABC",           "abc_analysis",       True,  False),
 ]
+
+
+class ReportScheduleDialog(QDialog):
+    """Simple dialog to define a recurring report schedule."""
+
+    def __init__(self, service: ReportsService, parent=None):
+        super().__init__(parent)
+        self.service = service
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.setWindowTitle("Programación de reporte")
+        form = QFormLayout(self)
+
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Ej. Alertas diarias")
+        self.report_type_combo = QComboBox()
+        for label, key, _, __ in _REPORT_TYPES:
+            self.report_type_combo.addItem(label, key)
+        self.freq_combo = QComboBox()
+        self.freq_combo.addItem("Diaria", "daily")
+        self.freq_combo.addItem("Semanal", "weekly")
+        self.freq_combo.addItem("Mensual", "monthly")
+        self.time_edit = QTimeEdit()
+        self.time_edit.setTime(QTime(8, 0))
+        self.weekday_combo = QComboBox()
+        self.weekday_combo.addItem("Lunes", 0)
+        self.weekday_combo.addItem("Martes", 1)
+        self.weekday_combo.addItem("Miércoles", 2)
+        self.weekday_combo.addItem("Jueves", 3)
+        self.weekday_combo.addItem("Viernes", 4)
+        self.weekday_combo.addItem("Sábado", 5)
+        self.weekday_combo.addItem("Domingo", 6)
+        self.day_spin = QSpinBox()
+        self.day_spin.setRange(1, 31)
+        self.day_spin.setValue(1)
+        self.params_edit = QLineEdit()
+        self.params_edit.setPlaceholderText('{"branch_id": 1, "days_until_expiry": 30}')
+
+        form.addRow("Nombre:", self.name_edit)
+        form.addRow("Tipo de reporte:", self.report_type_combo)
+        form.addRow("Frecuencia:", self.freq_combo)
+        form.addRow("Hora:", self.time_edit)
+        form.addRow("Día de la semana:", self.weekday_combo)
+        form.addRow("Día del mes:", self.day_spin)
+        form.addRow("Parámetros (JSON):", self.params_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def _save(self):
+        try:
+            params = json.loads(self.params_edit.text().strip() or "{}") if self.params_edit.text().strip() else {}
+        except Exception as exc:
+            QMessageBox.critical(self, "Parámetros inválidos", str(exc))
+            return
+        data = {
+            "name": self.name_edit.text().strip(),
+            "report_type": self.report_type_combo.currentData(),
+            "schedule_type": self.freq_combo.currentData(),
+            "schedule_time": self.time_edit.time().toString("HH:mm"),
+            "schedule_day_of_week": self.weekday_combo.currentData(),
+            "schedule_day_of_month": self.day_spin.value(),
+            "parameters": params,
+            "is_active": True,
+        }
+        self.service.create_report_schedule(data)
+        self.accept()
+
+
+class ReportScheduler(threading.Thread):
+    """Background thread that runs due report schedules every hour."""
+
+    def __init__(self, service: ReportsService):
+        super().__init__(daemon=True)
+        self.service = service
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def run(self):
+        while not self._stop_event.is_set():
+            try:
+                self.service.process_due_schedules()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Scheduled reports processing error: %s", exc)
+            self._stop_event.wait(3600)
 
 
 class ReportsView(QWidget):
@@ -67,6 +166,8 @@ class ReportsView(QWidget):
         self._last_report_data: dict = {}
         self._last_report_type: str = ""
         self._setup_ui()
+        self._scheduler = ReportScheduler(self.service)
+        self._scheduler.start()
 
     # ──────────────────────────────────────────────────────────────────────────
     # UI SETUP
@@ -242,6 +343,78 @@ class ReportsView(QWidget):
         fl9.addRow("Límite detalle:", self.audit_limit_spin)
         layout.addWidget(self.grp_history_audit)
 
+        self.grp_count_sessions = QGroupBox("Opciones Conteos")
+        fl10 = QFormLayout(self.grp_count_sessions)
+        self.count_status_combo = QComboBox()
+        self.count_status_combo.addItem("Todos", None)
+        for value, label in [("pending", "Pendientes"), ("in_progress", "En progreso"), ("completed", "Completados"), ("cancelled", "Cancelados")]:
+            self.count_status_combo.addItem(label, value)
+        fl10.addRow("Estado:", self.count_status_combo)
+        layout.addWidget(self.grp_count_sessions)
+
+        self.grp_approvals = QGroupBox("Opciones Aprobaciones")
+        fl11 = QFormLayout(self.grp_approvals)
+        self.approval_level_combo = QComboBox()
+        self.approval_level_combo.addItem("Todos", None)
+        for value, label in [("admin", "Admin"), ("manager", "Manager")]:
+            self.approval_level_combo.addItem(label, value)
+        fl11.addRow("Nivel:", self.approval_level_combo)
+        layout.addWidget(self.grp_approvals)
+
+        self.grp_alerts = QGroupBox("Opciones Alertas")
+        fl12 = QFormLayout(self.grp_alerts)
+        self.alert_severity_combo = QComboBox()
+        self.alert_severity_combo.addItem("Todas", None)
+        for value, label in [("critical", "Critical"), ("warning", "Warning"), ("info", "Info")]:
+            self.alert_severity_combo.addItem(label, value)
+        fl12.addRow("Severidad:", self.alert_severity_combo)
+        layout.addWidget(self.grp_alerts)
+
+        self.grp_config_changes = QGroupBox("Opciones Cambios")
+        fl13 = QFormLayout(self.grp_config_changes)
+        self.config_entity_combo = QComboBox()
+        self.config_entity_combo.addItem("Todos", None)
+        for value, label in [("branch", "Sucursal"), ("product", "Producto"), ("branch_config", "Configuración de sucursal")]:
+            self.config_entity_combo.addItem(label, value)
+        fl13.addRow("Entidad:", self.config_entity_combo)
+        layout.addWidget(self.grp_config_changes)
+
+        self.grp_batches = QGroupBox("Opciones Lotes")
+        fl14 = QFormLayout(self.grp_batches)
+        self.batch_days_spin = QSpinBox()
+        self.batch_days_spin.setRange(1, 365)
+        self.batch_days_spin.setValue(30)
+        self.batch_days_spin.setSuffix(" días")
+        fl14.addRow("Días hasta vencimiento:", self.batch_days_spin)
+        layout.addWidget(self.grp_batches)
+
+        self.grp_abc = QGroupBox("Opciones Análisis ABC")
+        fl15 = QFormLayout(self.grp_abc)
+        self.abc_days_spin = QSpinBox()
+        self.abc_days_spin.setRange(7, 365)
+        self.abc_days_spin.setValue(90)
+        self.abc_days_spin.setSuffix(" días")
+        fl15.addRow("Sin movimiento desde:", self.abc_days_spin)
+        layout.addWidget(self.grp_abc)
+
+        self.grp_schedules = QGroupBox("Programaciones")
+        fl16 = QVBoxLayout(self.grp_schedules)
+        self.schedule_list = QListWidget()
+        self.schedule_list.setMaximumHeight(140)
+        fl16.addWidget(self.schedule_list)
+        row_sched = QHBoxLayout()
+        btn_new_schedule = QPushButton("➕ Crear")
+        btn_new_schedule.clicked.connect(self._create_schedule)
+        btn_run_schedule = QPushButton("▶ Ejecutar")
+        btn_run_schedule.clicked.connect(self._run_selected_schedule)
+        btn_delete_schedule = QPushButton("🗑 Eliminar")
+        btn_delete_schedule.clicked.connect(self._delete_selected_schedule)
+        row_sched.addWidget(btn_new_schedule)
+        row_sched.addWidget(btn_run_schedule)
+        row_sched.addWidget(btn_delete_schedule)
+        fl16.addLayout(row_sched)
+        layout.addWidget(self.grp_schedules)
+
         # Generate button
         btn_generate = QPushButton("▶  Generar reporte")
         btn_generate.setStyleSheet(
@@ -254,6 +427,7 @@ class ReportsView(QWidget):
 
         layout.addStretch()
         self._on_report_type_changed()  # initial visibility
+        self._refresh_schedule_list()
         return panel
 
     # ── Right panel: output + export buttons ─────────────────────────────────
@@ -381,7 +555,58 @@ class ReportsView(QWidget):
         self.grp_trends.setVisible(rtype == "trends")
         self.grp_compare.setVisible(rtype == "comparison")
         self.grp_history_audit.setVisible(rtype == "history_audit")
+        self.grp_count_sessions.setVisible(rtype == "count_sessions")
+        self.grp_approvals.setVisible(rtype == "approvals")
+        self.grp_alerts.setVisible(rtype == "alerts")
+        self.grp_config_changes.setVisible(rtype == "config_changes")
+        self.grp_batches.setVisible(rtype == "batches")
+        self.grp_abc.setVisible(rtype == "abc_analysis")
 
+
+    def _refresh_schedule_list(self):
+        try:
+            schedules = self.service.list_report_schedules(include_inactive=False)
+        except Exception as exc:
+            logger.warning("Could not load schedules: %s", exc)
+            schedules = []
+        self.schedule_list.clear()
+        for schedule in schedules:
+            label = f"{schedule['name']} · {schedule['report_type']} · {schedule['schedule_type']}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, schedule['id'])
+            self.schedule_list.addItem(item)
+
+    def _create_schedule(self):
+        dialog = ReportScheduleDialog(self.service, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._refresh_schedule_list()
+            QMessageBox.information(self, "Programación guardada", "La programación se creó correctamente.")
+
+    def _run_selected_schedule(self):
+        item = self.schedule_list.currentItem()
+        if not item:
+            return
+        try:
+            result = self.service.run_report_schedule(item.data(Qt.ItemDataRole.UserRole))
+            QMessageBox.information(self, "Reporte programado ejecutado", f"Archivo generado en:\n{result['file_path']}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Error al ejecutar programación", str(exc))
+
+    def _delete_selected_schedule(self):
+        item = self.schedule_list.currentItem()
+        if not item:
+            return
+        schedule_id = item.data(Qt.ItemDataRole.UserRole)
+        try:
+            self.service.delete_report_schedule(schedule_id)
+            self._refresh_schedule_list()
+        except Exception as exc:
+            QMessageBox.critical(self, "Error al eliminar programación", str(exc))
+
+    def closeEvent(self, event):
+        if getattr(self, "_scheduler", None):
+            self._scheduler.stop()
+        super().closeEvent(event)
 
     # ──────────────────────────────────────────────────────────────────────────
     # GENERATE REPORT
@@ -502,6 +727,48 @@ class ReportsView(QWidget):
                 date_to=date_to,
                 event_type=audit_event_type,
                 limit=self.audit_limit_spin.value(),
+            )
+        if rtype == "count_sessions":
+            return svc.generate_count_session_report(
+                branch_id=branch_id,
+                date_from=date_from,
+                date_to=date_to,
+                status=self.count_status_combo.currentData(),
+            )
+        if rtype == "approvals":
+            return svc.generate_approval_report(
+                branch_id=branch_id,
+                date_from=date_from,
+                date_to=date_to,
+                approval_level=self.approval_level_combo.currentData(),
+            )
+        if rtype == "alerts":
+            return svc.generate_alert_report(
+                branch_id=branch_id,
+                date_from=date_from,
+                date_to=date_to,
+                severity=self.alert_severity_combo.currentData(),
+            )
+        if rtype == "branch_capacity":
+            return svc.generate_branch_capacity_report()
+        if rtype == "config_changes":
+            return svc.generate_config_change_report(
+                branch_id=branch_id,
+                date_from=date_from,
+                date_to=date_to,
+                entity_type=self.config_entity_combo.currentData(),
+            )
+        if rtype == "batches":
+            return svc.generate_batch_report(
+                branch_id=branch_id,
+                days_until_expiry=self.batch_days_spin.value(),
+            )
+        if rtype == "kits":
+            return svc.generate_kit_report(branch_id=branch_id)
+        if rtype == "abc_analysis":
+            return svc.generate_abc_analysis_report(
+                branch_id=branch_id,
+                days_without_movement=self.abc_days_spin.value(),
             )
         raise ValueError(f"Tipo de reporte desconocido: {rtype}")
 
@@ -629,6 +896,18 @@ class ReportsView(QWidget):
             params["audit_entity_type"] = self.audit_entity_type_combo.currentData()
             params["audit_event_type"] = self.audit_event_type_input.text().strip() or None
             params["audit_limit"] = self.audit_limit_spin.value()
+        if self._last_report_type == "count_sessions":
+            params["count_status"] = self.count_status_combo.currentData()
+        if self._last_report_type == "approvals":
+            params["approval_level"] = self.approval_level_combo.currentData()
+        if self._last_report_type == "alerts":
+            params["alert_severity"] = self.alert_severity_combo.currentData()
+        if self._last_report_type == "config_changes":
+            params["config_entity_type"] = self.config_entity_combo.currentData()
+        if self._last_report_type == "batches":
+            params["batch_days"] = self.batch_days_spin.value()
+        if self._last_report_type == "abc_analysis":
+            params["abc_days"] = self.abc_days_spin.value()
 
         try:
             self.service.save_report_config(
@@ -700,6 +979,30 @@ class ReportsView(QWidget):
                         break
                 self.audit_event_type_input.setText(params.get("audit_event_type") or "")
                 self.audit_limit_spin.setValue(params.get("audit_limit", 500))
+            if rtype == "count_sessions":
+                for i in range(self.count_status_combo.count()):
+                    if self.count_status_combo.itemData(i) == params.get("count_status"):
+                        self.count_status_combo.setCurrentIndex(i)
+                        break
+            if rtype == "approvals":
+                for i in range(self.approval_level_combo.count()):
+                    if self.approval_level_combo.itemData(i) == params.get("approval_level"):
+                        self.approval_level_combo.setCurrentIndex(i)
+                        break
+            if rtype == "alerts":
+                for i in range(self.alert_severity_combo.count()):
+                    if self.alert_severity_combo.itemData(i) == params.get("alert_severity"):
+                        self.alert_severity_combo.setCurrentIndex(i)
+                        break
+            if rtype == "config_changes":
+                for i in range(self.config_entity_combo.count()):
+                    if self.config_entity_combo.itemData(i) == params.get("config_entity_type"):
+                        self.config_entity_combo.setCurrentIndex(i)
+                        break
+            if rtype == "batches":
+                self.batch_days_spin.setValue(params.get("batch_days", 30))
+            if rtype == "abc_analysis":
+                self.abc_days_spin.setValue(params.get("abc_days", 90))
 
             # Auto-generate            self.load_data()
         except Exception as exc:
