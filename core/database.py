@@ -52,7 +52,8 @@ def init_db() -> None:
     """Initialize database, creating all tables and running pending migrations."""
     from models import (  # noqa: F401 – side-effects register tables with Base
         product, category, supplier, product_relation, price_history,
-        branch, inventory, inventory_history, movement, user, saved_report,
+        branch, inventory, inventory_history, inventory_count_session,
+        inventory_count_item, inventory_batch, movement, user, saved_report,
         branch_config_history,
     )
     # Dashboard widget config model (Exp 9)

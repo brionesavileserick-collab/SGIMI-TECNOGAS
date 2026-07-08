@@ -80,6 +80,15 @@ ALERT_TYPES = {
     "discrepancy": "Discrepancia detectada",
     "validation_failed": "Validacion fallida",
     "transfer_pending": "Transferencia pendiente",
+    "count_overdue": "Conteo vencido",
+    "count_due_soon": "Conteo próximo a vencer",
+    "approval_pending_admin": "Aprobación pendiente (Admin)",
+    "approval_pending_manager": "Aprobación pendiente (Gerente)",
+    "capacity_warning": "Capacidad de sucursal (warning)",
+    "capacity_critical": "Capacidad de sucursal (critical)",
+    "capacity_exceeded": "Capacidad de sucursal (excedida)",
+    "batch_expiring_urgent": "Lote por vencer (urgente)",
+    "batch_expiring_warning": "Lote por vencer (warning)",
     "manual": "Alerta manual",           # Exp 6
 }
 

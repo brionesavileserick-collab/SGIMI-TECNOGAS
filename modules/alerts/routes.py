@@ -24,8 +24,25 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QFont, QColor
 from modules.alerts.service import AlertService
-from config import ALERT_TYPES, ALERT_SEVERITIES, ALERT_PRIORITIES
+from config import ALERT_SEVERITIES, ALERT_PRIORITIES
 import logging
+
+_ALERT_TYPE_LABELS = {
+    "low_stock": "Stock bajo",
+    "discrepancy": "Discrepancia detectada",
+    "validation_failed": "Validación fallida",
+    "transfer_pending": "Transferencia pendiente",
+    "count_overdue": "Conteo vencido",
+    "count_due_soon": "Conteo próximo a vencer",
+    "approval_pending_admin": "Aprobación pendiente (Admin)",
+    "approval_pending_manager": "Aprobación pendiente (Gerente)",
+    "capacity_warning": "Capacidad de sucursal (warning)",
+    "capacity_critical": "Capacidad de sucursal (critical)",
+    "capacity_exceeded": "Capacidad de sucursal (excedida)",
+    "batch_expiring_urgent": "Lote por vencer (urgente)",
+    "batch_expiring_warning": "Lote por vencer (warning)",
+    "manual": "Alerta manual",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +255,7 @@ class OpenAlertsTab(QWidget):
     # Columns: hidden ID + visible columns
     _HEADERS = [
         "ID", "Tipo", "Severidad", "Prioridad", "Producto", "Sucursal",
-        "Título", "Asignada a", "Leída", "Vencida", "Acciones",
+        "Título", "Días vencido", "Asignada a", "Leída", "Vencida", "Acciones",
     ]
     _COL_ID       = 0
     _COL_TIPO     = 1
@@ -247,10 +264,11 @@ class OpenAlertsTab(QWidget):
     _COL_PROD     = 4
     _COL_BRANCH   = 5
     _COL_TITLE    = 6
-    _COL_ASSIGN   = 7
-    _COL_READ     = 8
-    _COL_EXPIRED  = 9
-    _COL_ACTIONS  = 10
+    _COL_DAYS     = 7
+    _COL_ASSIGN   = 8
+    _COL_READ     = 9
+    _COL_EXPIRED  = 10
+    _COL_ACTIONS  = 11
 
     def __init__(self, db: Session, badge: UnreadBadgeLabel, parent=None):
         super().__init__(parent)
@@ -258,6 +276,7 @@ class OpenAlertsTab(QWidget):
         self.service = AlertService(db)
         self.badge = badge
         self.current_severity = None
+        self.current_alert_type = None
         self.current_branch_id = None
         self.current_date_from = None
         self.current_date_to = None
@@ -280,6 +299,15 @@ class OpenAlertsTab(QWidget):
         self.severity_combo.currentIndexChanged.connect(self._on_filter_changed)
         filter_layout.addWidget(QLabel("Severidad:"))
         filter_layout.addWidget(self.severity_combo)
+
+        # Tipo de alerta
+        self.alert_type_combo = QComboBox()
+        self.alert_type_combo.addItem("Todos los tipos", None)
+        for key, label in _ALERT_TYPE_LABELS.items():
+            self.alert_type_combo.addItem(label, key)
+        self.alert_type_combo.currentIndexChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(QLabel("Tipo:"))
+        filter_layout.addWidget(self.alert_type_combo)
 
         # Sucursal – Exp 4
         self.branch_combo = QComboBox()
@@ -342,6 +370,7 @@ class OpenAlertsTab(QWidget):
 
     def _on_filter_changed(self):
         self.current_severity = self.severity_combo.currentData()
+        self.current_alert_type = self.alert_type_combo.currentData()
         self.current_branch_id = self.branch_combo.currentData()
         self.show_mine_only = self.mine_check.isChecked()
 
@@ -361,6 +390,7 @@ class OpenAlertsTab(QWidget):
         alerts = self.service.list_alerts(
             limit=500,
             severity=self.current_severity,
+            alert_type=self.current_alert_type,
             branch_id=self.current_branch_id,
             date_from=self.current_date_from,
             date_to=self.current_date_to,
@@ -400,12 +430,13 @@ class OpenAlertsTab(QWidget):
         expired_text = "⚠ Vencida" if alert.get("is_expired_flag") else ""
 
         self.table.setItem(row, self._COL_ID,     QTableWidgetItem(str(alert["id"])))
-        self.table.setItem(row, self._COL_TIPO,   _item(ALERT_TYPES.get(alert["alert_type"], alert["alert_type"])))
+        self.table.setItem(row, self._COL_TIPO,   _item(_ALERT_TYPE_LABELS.get(alert["alert_type"], alert["alert_type"])))
         self.table.setItem(row, self._COL_SEV,    _item(ALERT_SEVERITIES.get(sev, sev)))
         self.table.setItem(row, self._COL_PRIO,   _item(prio_labels.get(alert.get("priority", "normal"), alert.get("priority", ""))))
         self.table.setItem(row, self._COL_PROD,   _item(alert.get("product_name", "—")))
         self.table.setItem(row, self._COL_BRANCH, _item(alert.get("branch_name", "—")))
         self.table.setItem(row, self._COL_TITLE,  _item(alert.get("title", "")))
+        self.table.setItem(row, self._COL_DAYS,   _item(self._get_overdue_days(alert)))
         self.table.setItem(row, self._COL_ASSIGN, _item(alert.get("assigned_to_name", "—")))
         self.table.setItem(row, self._COL_READ,   _item("Sí" if alert["is_read"] else "No"))
         self.table.setItem(row, self._COL_EXPIRED, _item(expired_text))
@@ -434,6 +465,13 @@ class OpenAlertsTab(QWidget):
         assign_btn.setMaximumWidth(65)
         assign_btn.clicked.connect(lambda _, a=alert: self._on_assign(a))
         al.addWidget(assign_btn)
+
+        context_action = self._get_context_action(alert)
+        if context_action:
+            btn = QPushButton(context_action["label"])
+            btn.setMaximumWidth(120)
+            btn.clicked.connect(lambda _, a=alert, action=context_action: self._on_context_action(a, action))
+            al.addWidget(btn)
 
         # Quick actions (Exp 3)
         full_alert = self.service.get_alert_with_actions(alert["id"])
@@ -478,6 +516,52 @@ class OpenAlertsTab(QWidget):
             else:
                 self.service.assign_alert(alert["id"], user_id)
             self.load_data()
+
+    def _get_overdue_days(self, alert: dict) -> str:
+        alert_type = alert.get("alert_type")
+        if alert_type not in {"count_overdue", "count_due_soon"}:
+            return "—"
+        due_date = alert.get("due_date")
+        if not due_date:
+            return "—"
+        try:
+            if isinstance(due_date, str):
+                due_dt = datetime.fromisoformat(due_date.replace("Z", "+00:00"))
+            else:
+                due_dt = due_date
+            if due_dt.tzinfo is None:
+                due_dt = due_dt.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            delta = now.date() - due_dt.date()
+            return str(delta.days if delta.days >= 0 else 0)
+        except Exception:
+            return "—"
+
+    def _get_context_action(self, alert: dict) -> dict | None:
+        alert_type = alert.get("alert_type")
+        if alert_type in {"count_overdue", "count_due_soon"}:
+            return {"label": "Ver Conteo", "target": "count"}
+        if alert_type in {"approval_pending_admin", "approval_pending_manager"}:
+            return {"label": "Ver Transferencia", "target": "movement"}
+        if alert_type in {"capacity_warning", "capacity_critical", "capacity_exceeded"}:
+            return {"label": "Ver Sucursal", "target": "branch"}
+        if alert_type in {"batch_expiring_urgent", "batch_expiring_warning"}:
+            return {"label": "Ver Lote", "target": "batch"}
+        return None
+
+    def _on_context_action(self, alert: dict, action: dict):
+        target = action.get("target", "")
+        target_label = {
+            "count": "módulo de conteos",
+            "movement": "movimiento",
+            "branch": "configuración de sucursal",
+            "batch": "detalle del lote",
+        }.get(target, "módulo correspondiente")
+        QMessageBox.information(
+            self,
+            "Abrir detalle",
+            f"Se abriría el {target_label} para la alerta #{alert['id']}",
+        )
 
     def _on_quick_action(self, action_def: dict, alert: dict):
         """Notify parent that a quick-action was triggered (Exp 3)."""
@@ -607,7 +691,7 @@ class ResolvedAlertsTab(QWidget):
                 resolved_str = str(alert["resolved_at"])
 
         self.table.setItem(row, self._COL_ID,     _item(alert["id"]))
-        self.table.setItem(row, self._COL_TIPO,   _item(ALERT_TYPES.get(alert["alert_type"], alert["alert_type"])))
+        self.table.setItem(row, self._COL_TIPO,   _item(_ALERT_TYPE_LABELS.get(alert["alert_type"], alert["alert_type"])))
         self.table.setItem(row, self._COL_SEV,    _item(ALERT_SEVERITIES.get(alert["severity"], alert["severity"])))
         self.table.setItem(row, self._COL_PROD,   _item(alert.get("product_name", "—")))
         self.table.setItem(row, self._COL_BRANCH, _item(alert.get("branch_name", "—")))

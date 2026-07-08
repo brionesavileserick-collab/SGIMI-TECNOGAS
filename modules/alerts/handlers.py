@@ -66,6 +66,16 @@ class AlertHandlers:
         event_bus.subscribe(settings.Events.STOCK_CRITICAL,     self.handle_stock_critical)
         event_bus.subscribe(settings.Events.TRANSFER_REJECTED,  self.handle_transfer_rejected)
         event_bus.subscribe(settings.Events.MOVEMENT_CREATED,   self.handle_movement_created)
+        event_bus.subscribe(settings.Events.COUNT_SESSION_OVERDUE, self.handle_count_session_overdue)
+        event_bus.subscribe(settings.Events.COUNT_SESSION_COMPLETED, self.handle_count_session_completed)
+        event_bus.subscribe(settings.Events.MOVEMENT_PENDING_ADMIN_APPROVAL, self.handle_approval_pending)
+        event_bus.subscribe(settings.Events.MOVEMENT_PENDING_MANAGER_APPROVAL, self.handle_approval_pending)
+        event_bus.subscribe(settings.Events.MOVEMENT_ADMIN_APPROVED, self.handle_approval_completed)
+        event_bus.subscribe(settings.Events.MOVEMENT_MANAGER_APPROVED, self.handle_approval_completed)
+        event_bus.subscribe(settings.Events.MOVEMENT_APPROVAL_REJECTED, self.handle_approval_completed)
+        event_bus.subscribe(settings.Events.BRANCH_CAPACITY_WARNING, self.handle_branch_capacity_warning)
+        event_bus.subscribe(settings.Events.BRANCH_CAPACITY_EXCEEDED, self.handle_branch_capacity_warning)
+        event_bus.subscribe(settings.Events.BATCH_EXPIRING, self.handle_batch_expiring)
 
     # ------------------------------------------------------------------ #
     # Original handlers (unchanged logic)                                 #
@@ -230,6 +240,123 @@ class AlertHandlers:
         except Exception as e:
             logger.error(f"Error handling movement_created for alerts: {e}")
 
+    def handle_count_session_overdue(self, data: Dict[str, Any]):
+        """Create an overdue-count alert when a scheduled count is overdue."""
+        try:
+            branch_id = data.get("branch_id")
+            scheduled_date = data.get("scheduled_date") or data.get("due_date")
+            session_id = data.get("session_id") or data.get("id")
+            if not branch_id or not scheduled_date:
+                return
+            existing = self.service.get_open_alert(
+                alert_type="count_overdue",
+                branch_id=branch_id,
+                movement_id=session_id,
+            )
+            if existing:
+                return
+            alert_data = self.service.create_count_overdue_alert(branch_id, scheduled_date, session_id=session_id)
+            if alert_data:
+                self._emit_and_notify(alert_data)
+        except Exception as e:
+            logger.error(f"Error handling count_session_overdue for alerts: {e}")
+
+    def handle_count_session_completed(self, data: Dict[str, Any]):
+        """Resolve pending count alerts when the count session is completed."""
+        try:
+            branch_id = data.get("branch_id")
+            session_id = data.get("session_id") or data.get("id")
+            self.service.check_and_resolve(
+                alert_type="count_overdue",
+                branch_id=branch_id,
+                movement_id=session_id,
+                context_data=data,
+            )
+        except Exception as e:
+            logger.error(f"Error handling count_session_completed for alerts: {e}")
+
+    def handle_approval_pending(self, data: Dict[str, Any]):
+        """Create approval-pending alerts for admin or manager approval flows."""
+        try:
+            movement_id = data.get("movement_id") or data.get("id")
+            branch_id = data.get("branch_id")
+            approval_level = data.get("approval_level") or ("manager" if "manager" in (data.get("event") or "") else "admin")
+            product_name = data.get("product_name") or data.get("product") or "producto"
+            if not movement_id or not branch_id:
+                return
+            existing = self.service.get_open_alert(
+                alert_type=("approval_pending_manager" if approval_level == "manager" else "approval_pending_admin"),
+                movement_id=movement_id,
+                branch_id=branch_id,
+            )
+            if existing:
+                return
+            alert_data = self.service.create_approval_pending_alert(movement_id, branch_id, approval_level, product_name)
+            if alert_data:
+                self._emit_and_notify(alert_data)
+        except Exception as e:
+            logger.error(f"Error handling approval_pending for alerts: {e}")
+
+    def handle_approval_completed(self, data: Dict[str, Any]):
+        """Resolve pending approval alerts after approval or rejection."""
+        try:
+            movement_id = data.get("movement_id") or data.get("id")
+            branch_id = data.get("branch_id")
+            if not movement_id:
+                return
+            self.service.check_and_resolve(
+                alert_type="approval_pending_admin",
+                branch_id=branch_id,
+                movement_id=movement_id,
+                context_data=data,
+            )
+            self.service.check_and_resolve(
+                alert_type="approval_pending_manager",
+                branch_id=branch_id,
+                movement_id=movement_id,
+                context_data=data,
+            )
+        except Exception as e:
+            logger.error(f"Error handling approval_completed for alerts: {e}")
+
+    def handle_branch_capacity_warning(self, data: Dict[str, Any]):
+        """Create branch-capacity alerts when the branch is reaching saturation."""
+        try:
+            branch_id = data.get("branch_id")
+            if not branch_id:
+                return
+            current_skus = data.get("current_skus") or data.get("current_products") or 0
+            max_products = data.get("max_products") or data.get("capacity") or 0
+            usage_percent = data.get("usage_percent") or data.get("percent") or 0
+            if max_products and current_skus is not None:
+                alert_data = self.service.create_capacity_alert(branch_id, int(current_skus), int(max_products), float(usage_percent))
+                if alert_data:
+                    self._emit_and_notify(alert_data)
+        except Exception as e:
+            logger.error(f"Error handling branch_capacity_warning for alerts: {e}")
+
+    def handle_batch_expiring(self, data: Dict[str, Any]):
+        """Create batch-expiring alerts when a batch is about to expire."""
+        try:
+            batch_id = data.get("batch_id") or data.get("id")
+            branch_id = data.get("branch_id")
+            product_name = data.get("product_name") or data.get("product") or "producto"
+            expiration_date = data.get("expiration_date")
+            days_until_expiry = data.get("days_until_expiry")
+            if not batch_id or not branch_id or expiration_date is None:
+                return
+            alert_data = self.service.create_batch_expiring_alert(
+                batch_id=batch_id,
+                branch_id=branch_id,
+                product_name=product_name,
+                expiration_date=expiration_date,
+                days_until_expiry=days_until_expiry if days_until_expiry is not None else 0,
+            )
+            if alert_data:
+                self._emit_and_notify(alert_data)
+        except Exception as e:
+            logger.error(f"Error handling batch_expiring for alerts: {e}")
+
     # ------------------------------------------------------------------ #
     # Internal helpers                                                    #
     # ------------------------------------------------------------------ #
@@ -266,14 +393,15 @@ class AlertHandlers:
             return
 
         difference = physical_stock - digital_stock
+        message_data = self.service._build_message(
+            "discrepancy",
+            data={"physical": physical_stock, "digital": digital_stock, "diff": difference},
+        )
         alert_data = self.service.create_alert(
             alert_type="discrepancy",
             severity="critical",
-            title="Discrepancia de Inventario Detectada",
-            message=(
-                f"Diferencia detectada: Físico={physical_stock}, "
-                f"Digital={digital_stock}, Diferencia={difference}"
-            ),
+            title=message_data.get("title", "Discrepancia de Inventario Detectada"),
+            message=message_data.get("message", f"Diferencia detectada: Físico={physical_stock}, Digital={digital_stock}, Diferencia={difference}"),
             product_id=product_id,
             branch_id=branch_id,
         )
@@ -344,6 +472,16 @@ class AlertHandlers:
         event_bus.unsubscribe(settings.Events.STOCK_CRITICAL,     self.handle_stock_critical)
         event_bus.unsubscribe(settings.Events.TRANSFER_REJECTED,  self.handle_transfer_rejected)
         event_bus.unsubscribe(settings.Events.MOVEMENT_CREATED,   self.handle_movement_created)
+        event_bus.unsubscribe(settings.Events.COUNT_SESSION_OVERDUE, self.handle_count_session_overdue)
+        event_bus.unsubscribe(settings.Events.COUNT_SESSION_COMPLETED, self.handle_count_session_completed)
+        event_bus.unsubscribe(settings.Events.MOVEMENT_PENDING_ADMIN_APPROVAL, self.handle_approval_pending)
+        event_bus.unsubscribe(settings.Events.MOVEMENT_PENDING_MANAGER_APPROVAL, self.handle_approval_pending)
+        event_bus.unsubscribe(settings.Events.MOVEMENT_ADMIN_APPROVED, self.handle_approval_completed)
+        event_bus.unsubscribe(settings.Events.MOVEMENT_MANAGER_APPROVED, self.handle_approval_completed)
+        event_bus.unsubscribe(settings.Events.MOVEMENT_APPROVAL_REJECTED, self.handle_approval_completed)
+        event_bus.unsubscribe(settings.Events.BRANCH_CAPACITY_WARNING, self.handle_branch_capacity_warning)
+        event_bus.unsubscribe(settings.Events.BRANCH_CAPACITY_EXCEEDED, self.handle_branch_capacity_warning)
+        event_bus.unsubscribe(settings.Events.BATCH_EXPIRING, self.handle_batch_expiring)
         logger.info("Alert handlers unregistered")
 
 

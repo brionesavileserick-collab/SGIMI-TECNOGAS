@@ -75,7 +75,8 @@ class Settings:
         BRANCH_MANAGER_ASSIGNED = "branch.manager_assigned"
         # Branch – count scheduling events
         BRANCH_COUNT_SCHEDULED = "branch.count_scheduled"
-        BRANCH_COUNT_OVERDUE = "branch.count_overdue"
+        COUNT_SESSION_OVERDUE = "branch.count_overdue"
+        BRANCH_COUNT_OVERDUE = COUNT_SESSION_OVERDUE
         # Branch – capacity events
         BRANCH_CAPACITY_WARNING = "branch.capacity_warning"
         BRANCH_CAPACITY_EXCEEDED = "branch.capacity_exceeded"
@@ -84,6 +85,11 @@ class Settings:
         MOVEMENT_CREATED = "movement.created"
         MOVEMENT_VALIDATED = "movement.validated"
         MOVEMENT_REJECTED = "movement.rejected"
+        MOVEMENT_PENDING_ADMIN_APPROVAL = "movement.pending_admin_approval"
+        MOVEMENT_PENDING_MANAGER_APPROVAL = "movement.pending_manager_approval"
+        MOVEMENT_ADMIN_APPROVED = "movement.admin_approved"
+        MOVEMENT_MANAGER_APPROVED = "movement.manager_approved"
+        MOVEMENT_APPROVAL_REJECTED = "movement.approval_rejected"
 
         # Inventory events
         INVENTORY_UPDATED = "inventory.updated"

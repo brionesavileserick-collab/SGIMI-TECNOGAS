@@ -4,13 +4,18 @@ Models package initialization.
 
 from models.user import User
 from models.branch import Branch
-from models.product import Product
 from models.category import Category
 from models.supplier import Supplier
 from models.product_relation import ProductRelation
 from models.price_history import PriceHistory
+from models.product_change_history import ProductChangeHistory
+from models.kit_component import KitComponent
+from models.product import Product
 from models.inventory import Inventory
 from models.inventory_history import InventoryHistory
+from models.inventory_count_session import InventoryCountSession
+from models.inventory_count_item import InventoryCountItem
+from models.inventory_batch import InventoryBatch
 from models.movement import Movement, MovementType, MovementState, MovementPriority, MovementSource
 from models.movement_state_history import MovementStateHistory
 from models.saved_report import SavedReport
@@ -24,8 +29,8 @@ from modules.history.service import HistoryEntry
 
 __all__ = [
     "User", "Branch",
-    "Product", "Category", "Supplier", "ProductRelation", "PriceHistory",
-    "Inventory", "InventoryHistory",
+    "Product", "Category", "Supplier", "ProductRelation", "PriceHistory", "ProductChangeHistory", "KitComponent",
+    "Inventory", "InventoryHistory", "InventoryCountSession", "InventoryCountItem", "InventoryBatch",
     "Movement", "MovementType", "MovementState", "MovementPriority", "MovementSource",
     "MovementStateHistory",
     "SavedReport",

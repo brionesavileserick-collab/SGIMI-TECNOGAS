@@ -19,11 +19,12 @@ Expansions implemented:
 """
 
 from typing import List, Dict, Any, Optional
+from collections import defaultdict
 from sqlalchemy.orm import Session
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, inspect, text
 from sqlalchemy.sql import func
 from core.database import Base
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
 import logging
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class Alert(Base):
     movement_id = Column(Integer, nullable=True)
     is_read = Column(Boolean, default=False)
     is_resolved = Column(Boolean, default=False)
+    group_key = Column(String(100), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     resolved_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -91,6 +93,7 @@ class Alert(Base):
             "movement_id": self.movement_id,
             "is_read": self.is_read,
             "is_resolved": self.is_resolved,
+            "group_key": self.group_key,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
             # Expansions
@@ -109,8 +112,96 @@ class Alert(Base):
 class AlertService:
     """Service for alert management (all expansions)."""
 
+    _ALERT_TEMPLATES: Dict[str, Dict[str, str]] = {
+        "low_stock": {
+            "title": "Stock Bajo Detectado",
+            "message": "El stock actual ({current}) ha caído por debajo del mínimo ({min})",
+        },
+        "discrepancy": {
+            "title": "Discrepancia de Inventario Detectada",
+            "message": "Diferencia detectada: Físico={physical}, Digital={digital}, Diferencia={diff}",
+        },
+        "count_overdue": {
+            "title": "Conteo de Inventario Vencido",
+            "message": "La sucursal {branch} tiene un conteo pendiente desde {date}",
+        },
+        "count_due_soon": {
+            "title": "Conteo de Inventario Próximo a Vencer",
+            "message": "El conteo programado para {date} vence en {days} día(s)",
+        },
+        "approval_pending_admin": {
+            "title": "Transferencia Pendiente de Aprobación (Admin)",
+            "message": "Transferencia #{movement_id} de {product_name} requiere aprobación de Admin",
+        },
+        "approval_pending_manager": {
+            "title": "Transferencia Pendiente de Aprobación (Gerente)",
+            "message": "Transferencia #{movement_id} de {product_name} requiere aprobación de Gerente",
+        },
+        "capacity_warning": {
+            "title": "Capacidad de Sucursal WARNING",
+            "message": "{branch} tiene {current_skus} SKUs de {max_products} ({usage_percent}%)",
+        },
+        "capacity_critical": {
+            "title": "Capacidad de Sucursal CRITICAL",
+            "message": "{branch} tiene {current_skus} SKUs de {max_products} ({usage_percent}%)",
+        },
+        "capacity_exceeded": {
+            "title": "Capacidad de Sucursal EXCEEDED",
+            "message": "{branch} supera la capacidad máxima con {current_skus} SKUs de {max_products} ({usage_percent}%)",
+        },
+        "batch_expiring_urgent": {
+            "title": "Lote Próximo a Vencer",
+            "message": "El lote {batch_number} de {product_name} vence el {expiration_date} (en {days_until_expiry} días)",
+        },
+        "batch_expiring_warning": {
+            "title": "Lote Próximo a Vencer",
+            "message": "El lote {batch_number} de {product_name} vence el {expiration_date} (en {days_until_expiry} días)",
+        },
+    }
+
+    _AUTO_RESOLVE_RULES: Dict[str, Dict[str, Any]] = {
+        "low_stock": {
+            "condition": "stock_recovered",
+            "check": lambda data: (data or {}).get("digital_stock", 0) > (data or {}).get("min_stock", 0),
+        },
+        "discrepancy": {
+            "condition": "discrepancy_resolved",
+            "check": lambda data: not (data or {}).get("has_discrepancy", False),
+        },
+        "count_overdue": {
+            "condition": "count_completed",
+            "check": lambda data: bool((data or {}).get("session_completed") or (data or {}).get("completed")),
+        },
+        "approval_pending_admin": {
+            "condition": "approval_resolved",
+            "check": lambda data: bool((data or {}).get("approved") or (data or {}).get("rejected") or (data or {}).get("resolved")),
+        },
+        "approval_pending_manager": {
+            "condition": "approval_resolved",
+            "check": lambda data: bool((data or {}).get("approved") or (data or {}).get("rejected") or (data or {}).get("resolved")),
+        },
+    }
+
     def __init__(self, db: Session):
         self.db = db
+        self._ensure_alert_schema()
+
+    def _ensure_alert_schema(self):
+        """Ensure the alerts table has the optional group_key column for new alerts."""
+        if not self.db or not self.db.bind:
+            return
+        try:
+            inspector = inspect(self.db.bind)
+            if not inspector.has_table("alerts"):
+                return
+            columns = {col["name"] for col in inspector.get_columns("alerts")}
+            if "group_key" in columns:
+                return
+            self.db.execute(text("ALTER TABLE alerts ADD COLUMN group_key VARCHAR(100)"))
+            self.db.commit()
+            logger.info("Added group_key column to alerts table")
+        except Exception as exc:
+            logger.warning(f"Could not ensure alerts schema: {exc}")
 
     # ------------------------------------------------------------------ #
     # Core CRUD                                                           #
@@ -120,7 +211,8 @@ class AlertService:
                      message: str, product_id: int = None,
                      branch_id: int = None, movement_id: int = None,
                      priority: str = "normal", due_date: datetime = None,
-                     assigned_to: int = None) -> Dict[str, Any]:
+                     assigned_to: int = None,
+                     group_key: Optional[str] = None) -> Dict[str, Any]:
         """Create a new alert."""
         alert = Alert(
             alert_type=alert_type,
@@ -133,6 +225,7 @@ class AlertService:
             priority=priority,
             due_date=due_date,
             assigned_to=assigned_to,
+            group_key=group_key,
         )
         self.db.add(alert)
         self.db.commit()
@@ -140,9 +233,200 @@ class AlertService:
         logger.info(f"Alert created: {title}")
         return alert.to_dict()
 
+    def get_template(self, alert_type: str, **kwargs) -> Dict[str, str]:
+        """Return a formatted template for a supported alert type."""
+        template = self._ALERT_TEMPLATES.get(alert_type)
+        if not template:
+            return {"title": kwargs.get("title", ""), "message": kwargs.get("message", "")}
+        values = defaultdict(str, kwargs)
+        return {
+            "title": template.get("title", "").format_map(values),
+            "message": template.get("message", "").format_map(values),
+        }
+
+    def _build_message(self, alert_type: str, data: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, str]:
+        """Build title/message for an alert using templates when available."""
+        payload = dict(data or {})
+        payload.update(kwargs)
+        template = self.get_template(alert_type, **payload)
+        if template.get("title") or template.get("message"):
+            return template
+        return {
+            "title": payload.get("title", ""),
+            "message": payload.get("message", ""),
+        }
+
+    def create_count_overdue_alert(self, branch_id: int, scheduled_date: Any, session_id: int = None) -> Optional[Dict[str, Any]]:
+        """Create a count-overdue or due-soon alert when a scheduled count is stale."""
+        if scheduled_date is None:
+            return None
+        if isinstance(scheduled_date, str):
+            try:
+                scheduled_date = datetime.fromisoformat(scheduled_date.replace("Z", "+00:00"))
+            except ValueError:
+                try:
+                    scheduled_date = datetime.combine(date.fromisoformat(scheduled_date), datetime.min.time(), tzinfo=timezone.utc)
+                except ValueError:
+                    return None
+        if isinstance(scheduled_date, date) and not isinstance(scheduled_date, datetime):
+            due_date = datetime.combine(scheduled_date, datetime.min.time(), tzinfo=timezone.utc)
+        else:
+            due_date = scheduled_date
+            if getattr(due_date, "tzinfo", None) is None:
+                due_date = due_date.replace(tzinfo=timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        if due_date < now:
+            days_late = (now.date() - due_date.date()).days
+            alert_type = "count_overdue"
+            severity = "critical" if days_late > 3 else "warning"
+            title = "Conteo de Inventario Vencido"
+            message = f"La sucursal {self.get_branch_name(branch_id)} tiene un conteo programado desde {due_date.date().isoformat()}"
+            group_key = f"count_overdue_{branch_id}_{session_id or 'default'}"
+        else:
+            days_until = (due_date.date() - now.date()).days
+            if days_until > 3:
+                return None
+            alert_type = "count_due_soon"
+            severity = "info"
+            title = "Conteo de Inventario Próximo a Vencer"
+            message = f"El conteo programado para {due_date.date().isoformat()} vence en {days_until} día(s)"
+            group_key = f"count_due_soon_{branch_id}_{session_id or 'default'}"
+
+        return self.create_alert(
+            alert_type=alert_type,
+            severity=severity,
+            title=title,
+            message=message,
+            branch_id=branch_id,
+            movement_id=session_id,
+            priority="high" if alert_type == "count_overdue" else "normal",
+            due_date=due_date,
+            group_key=group_key,
+        )
+
+    def create_approval_pending_alert(self, movement_id: int, branch_id: int, approval_level: str, product_name: str) -> Dict[str, Any]:
+        """Create an alert for a transfer waiting for approval."""
+        approval_level = (approval_level or "admin").lower()
+        if approval_level == "manager":
+            alert_type = "approval_pending_manager"
+            title = "Transferencia Pendiente de Aprobación (Gerente)"
+            message = f"Transferencia #{movement_id} de {product_name} requiere aprobación de Gerente"
+        else:
+            alert_type = "approval_pending_admin"
+            title = "Transferencia Pendiente de Aprobación (Admin)"
+            message = f"Transferencia #{movement_id} de {product_name} requiere aprobación de Admin"
+        return self.create_alert(
+            alert_type=alert_type,
+            severity="warning",
+            title=title,
+            message=message,
+            branch_id=branch_id,
+            movement_id=movement_id,
+            group_key=f"approval_pending_{approval_level}_{movement_id}",
+        )
+
+    def create_capacity_alert(self, branch_id: int, current_skus: int, max_products: int, usage_percent: float) -> Dict[str, Any]:
+        """Create a branch-capacity alert based on usage percentage."""
+        branch_name = self.get_branch_name(branch_id)
+        if usage_percent >= 100:
+            alert_type = "capacity_exceeded"
+            severity = "critical"
+        elif usage_percent > 90:
+            alert_type = "capacity_critical"
+            severity = "critical"
+        elif usage_percent >= 70:
+            alert_type = "capacity_warning"
+            severity = "warning"
+        else:
+            return None
+        message = f"{branch_name} tiene {current_skus} SKUs de {max_products} ({usage_percent:.0f}%)"
+        return self.create_alert(
+            alert_type=alert_type,
+            severity=severity,
+            title=f"Capacidad de Sucursal {'CRITICAL' if alert_type != 'capacity_warning' else 'WARNING'}",
+            message=message,
+            branch_id=branch_id,
+            group_key=f"capacity_{branch_id}",
+        )
+
+    def create_batch_expiring_alert(self, batch_id: int, branch_id: int, product_name: str, expiration_date: Any, days_until_expiry: int) -> Dict[str, Any]:
+        """Create a batch-expiring alert for urgent or warning thresholds."""
+        if expiration_date is None:
+            return None
+        if isinstance(expiration_date, str):
+            try:
+                expiration_date = datetime.fromisoformat(expiration_date.replace("Z", "+00:00"))
+            except ValueError:
+                try:
+                    expiration_date = datetime.combine(date.fromisoformat(expiration_date), datetime.min.time(), tzinfo=timezone.utc)
+                except ValueError:
+                    return None
+        if isinstance(expiration_date, date) and not isinstance(expiration_date, datetime):
+            expiry_date = datetime.combine(expiration_date, datetime.min.time(), tzinfo=timezone.utc)
+        else:
+            expiry_date = expiration_date
+            if getattr(expiry_date, "tzinfo", None) is None:
+                expiry_date = expiry_date.replace(tzinfo=timezone.utc)
+        if days_until_expiry <= 7:
+            alert_type = "batch_expiring_urgent"
+            severity = "critical"
+        elif days_until_expiry <= 30:
+            alert_type = "batch_expiring_warning"
+            severity = "warning"
+        else:
+            return None
+        return self.create_alert(
+            alert_type=alert_type,
+            severity=severity,
+            title="Lote Próximo a Vencer",
+            message=f"El lote {batch_id} de {product_name} vence el {expiry_date.date().isoformat()} (en {days_until_expiry} días)",
+            branch_id=branch_id,
+            product_id=None,
+            group_key=f"batch_expiring_{branch_id}_{batch_id}",
+        )
+
+    def get_alert_group(self, group_key: str) -> List[Dict[str, Any]]:
+        """Return alerts grouped under a common key."""
+        alerts = (
+            self.db.query(Alert)
+            .filter(Alert.group_key == group_key)
+            .order_by(Alert.created_at.desc())
+            .all()
+        )
+        return [self.enrich_alert(a.to_dict()) for a in alerts]
+
+    def get_alert_group_summary(self, group_key: str) -> Dict[str, Any]:
+        """Return a lightweight summary for alerts sharing a group key."""
+        alerts = self.get_alert_group(group_key)
+        severities = {}
+        for alert in alerts:
+            severities[alert.get("severity", "info")] = severities.get(alert.get("severity", "info"), 0) + 1
+        return {
+            "count": len(alerts),
+            "severities": severities,
+            "oldest": alerts[-1] if alerts else None,
+            "newest": alerts[0] if alerts else None,
+        }
+
+    def check_and_resolve(self, alert_type: str, product_id: int = None,
+                          branch_id: int = None,
+                          movement_id: int = None,
+                          context_data: Optional[Dict[str, Any]] = None) -> bool:
+        """Resolve an open alert when an auto-resolve rule is satisfied."""
+        rule = self._AUTO_RESOLVE_RULES.get(alert_type)
+        if not rule and alert_type.startswith("approval_pending_"):
+            rule = self._AUTO_RESOLVE_RULES.get("approval_pending_admin")
+        if not rule:
+            return False
+        if not rule.get("check", lambda data: False)(context_data or {}):
+            return False
+        return self.resolve_open_alert(alert_type, product_id=product_id, branch_id=branch_id, movement_id=movement_id)
+
     def get_open_alert(self, alert_type: str, product_id: int = None,
                        branch_id: int = None,
-                       movement_id: int = None) -> Optional[Dict[str, Any]]:
+                       movement_id: int = None,
+                       group_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get an existing unresolved alert for the same operational condition."""
         query = self.db.query(Alert).filter(
             Alert.alert_type == alert_type,
@@ -162,6 +446,9 @@ class AlertService:
             query = query.filter(Alert.movement_id.is_(None))
         else:
             query = query.filter(Alert.movement_id == movement_id)
+
+        if group_key is not None:
+            query = query.filter(Alert.group_key == group_key)
 
         alert = query.order_by(Alert.created_at.desc()).first()
         return alert.to_dict() if alert else None
