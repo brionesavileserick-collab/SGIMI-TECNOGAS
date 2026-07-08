@@ -649,6 +649,195 @@ class ArchiveDialog(QDialog):
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# OutdatedDialog – selección de eventos específicos para eliminar
+# ════════════════════════════════════════════════════════════════════════════
+
+class OutdatedDialog(QDialog):
+    """
+    Dialog to select specific history entries to mark as outdated and delete.
+    
+    Shows a list of recent events with checkboxes for multi-selection.
+    """
+
+    def __init__(self, db: Session, service: HistoryService, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.service = service
+        self.setWindowTitle("Outdated - Eliminar Eventos Específicos")
+        self.setFixedSize(700, 500)
+        self.checkboxes: Dict[int, QCheckBox] = {}
+        self._build_ui()
+        self._load_entries()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Info
+        info = QLabel(
+            "Selecciona los eventos que deseas eliminar del historial.\n"
+            "Los eventos seleccionados se archivarán antes de ser eliminados.\n\n"
+            "Esta acción <b>no se puede deshacer</b>."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        # ── Filtros rápidos ─────────────────────────────────────────────
+        filter_row = QHBoxLayout()
+        
+        filter_row.addWidget(QLabel("Tipo:"))
+        self.entity_type_combo = QComboBox()
+        self.entity_type_combo.addItem("Todos", None)
+        for entity_type, label in _ENTITY_LABEL.items():
+            self.entity_type_combo.addItem(label, entity_type)
+        self.entity_type_combo.currentIndexChanged.connect(self._load_entries)
+        filter_row.addWidget(self.entity_type_combo)
+
+        filter_row.addWidget(QLabel("Límite:"))
+        self.limit_combo = QComboBox()
+        self.limit_combo.addItem("50 recientes", 50)
+        self.limit_combo.addItem("100 recientes", 100)
+        self.limit_combo.addItem("200 recientes", 200)
+        self.limit_combo.currentIndexChanged.connect(self._load_entries)
+        filter_row.addWidget(self.limit_combo)
+
+        filter_row.addStretch()
+        layout.addLayout(filter_row)
+
+        # ── Tabla con checkboxes ───────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setSpacing(2)
+
+        # Header row
+        header_row = QHBoxLayout()
+        header_row.addWidget(QLabel("Seleccionar"))
+        header_row.addWidget(QLabel("Fecha"))
+        header_row.addWidget(QLabel("Evento"))
+        header_row.addWidget(QLabel("Entidad"))
+        header_row.addWidget(QLabel("Acción"))
+        header_row.addStretch()
+        container_layout.addLayout(header_row)
+
+        # Entries container (will be populated dynamically)
+        self.entries_container = QWidget()
+        self.entries_layout = QVBoxLayout(self.entries_container)
+        self.entries_layout.setSpacing(2)
+        container_layout.addWidget(self.entries_container)
+
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+        # ── Botones de acción rápida ─────────────────────────────────────
+        action_row = QHBoxLayout()
+        
+        select_all_btn = QPushButton("Seleccionar todos")
+        select_all_btn.clicked.connect(self._select_all)
+        action_row.addWidget(select_all_btn)
+
+        deselect_all_btn = QPushButton("Deseleccionar todos")
+        deselect_all_btn.clicked.connect(self._deselect_all)
+        action_row.addWidget(deselect_all_btn)
+
+        action_row.addStretch()
+        
+        self.count_label = QLabel("0 seleccionados")
+        action_row.addWidget(self.count_label)
+        
+        layout.addLayout(action_row)
+
+        # Botones principales
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Eliminar seleccionados")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _load_entries(self):
+        """Load history entries based on current filters."""
+        # Clear existing checkboxes
+        for i in reversed(range(self.entries_layout.count())):
+            child = self.entries_layout.itemAt(i).widget()
+            if child:
+                child.deleteLater()
+        self.checkboxes.clear()
+
+        # Get filter values
+        entity_type = self.entity_type_combo.currentData()
+        limit = self.limit_combo.currentData()
+
+        # Load entries
+        try:
+            result = self.service.list_history(
+                limit=limit,
+                entity_type=entity_type,
+                enrich=True,
+            )
+            entries = result.get("entries", [])
+        except Exception as exc:
+            logger.warning(f"OutdatedDialog: could not load entries: {exc}")
+            entries = []
+
+        # Populate with checkboxes
+        for entry in entries:
+            row = QHBoxLayout()
+            
+            # Checkbox
+            cb = QCheckBox()
+            cb.stateChanged.connect(self._update_count)
+            self.checkboxes[entry["id"]] = cb
+            row.addWidget(cb)
+
+            # Date
+            created = (entry.get("created_at") or "")[:19].replace("T", " ")
+            date_label = QLabel(created)
+            date_label.setMaximumWidth(140)
+            row.addWidget(date_label)
+
+            # Event type
+            event_label = QLabel(entry.get("event_type", ""))
+            event_label.setMaximumWidth(120)
+            row.addWidget(event_label)
+
+            # Entity
+            entity_text = f"{_ENTITY_LABEL.get(entry.get('entity_type', ''), entry.get('entity_type', ''))} #{entry.get('entity_id', '')}"
+            entity_label = QLabel(entity_text)
+            entity_label.setMaximumWidth(150)
+            row.addWidget(entity_label)
+
+            # Action
+            action_label = QLabel(entry.get("action", ""))
+            action_label.setWordWrap(True)
+            row.addWidget(action_label, stretch=1)
+
+            self.entries_layout.addLayout(row)
+
+        self._update_count()
+
+    def _select_all(self):
+        """Select all checkboxes."""
+        for cb in self.checkboxes.values():
+            cb.setChecked(True)
+
+    def _deselect_all(self):
+        """Deselect all checkboxes."""
+        for cb in self.checkboxes.values():
+            cb.setChecked(False)
+
+    def _update_count(self):
+        """Update the count of selected entries."""
+        selected = sum(1 for cb in self.checkboxes.values() if cb.isChecked())
+        self.count_label.setText(f"{selected} seleccionados")
+
+    def get_selected_ids(self) -> List[int]:
+        """Return list of selected entry IDs."""
+        return [eid for eid, cb in self.checkboxes.items() if cb.isChecked()]
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # ProductMovementView – historial de movimientos por producto (Expansión 6)
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -880,6 +1069,12 @@ class HistoryListView(QWidget):
         refresh_btn = QPushButton("Actualizar")
         refresh_btn.clicked.connect(self.load_data)
         row1.addWidget(refresh_btn)
+
+        # Outdated – eliminar eventos específicos
+        outdated_btn = QPushButton("Outdated…")
+        outdated_btn.setToolTip("Elimina eventos específicos seleccionados del historial")
+        outdated_btn.clicked.connect(self._on_outdated)
+        row1.addWidget(outdated_btn)
 
         # Expansión 7 – archivo
         archive_btn = QPushButton("Archivar y Limpiar…")
@@ -1152,6 +1347,45 @@ class HistoryListView(QWidget):
         except Exception as exc:
             logger.exception("Archive error")
             QMessageBox.critical(self, "Error en archivado", str(exc))
+
+    def _on_outdated(self):
+        """Handle Outdated button - delete specific history entries."""
+        dlg = OutdatedDialog(self.db, self.service, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        
+        selected_ids = dlg.get_selected_ids()
+        if not selected_ids:
+            QMessageBox.information(self, "Sin selección", "No seleccionaste ningún evento para eliminar.")
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Confirmar eliminación",
+            f"¿Eliminar {len(selected_ids)} eventos seleccionados del historial?\n\n"
+            f"Los eventos se archivarán antes de ser eliminados.\n"
+            f"Esta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            result = self.service.delete_specific_entries(
+                entry_ids=selected_ids,
+                move_to_archive=True
+            )
+            deleted = result["deleted"]
+            archived = result["archived"]
+            QMessageBox.information(
+                self, "Eliminación completada",
+                f"{deleted} eventos eliminados del historial activo.\n"
+                f"{archived} eventos archivados."
+            )
+            self.load_data()
+        except Exception as exc:
+            logger.exception("Outdated deletion error")
+            QMessageBox.critical(self, "Error en eliminación", str(exc))
 
 
 # ════════════════════════════════════════════════════════════════════════════

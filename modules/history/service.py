@@ -991,6 +991,72 @@ class HistoryService:
         return estimates
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Outdated – Eliminación de eventos específicos
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def delete_specific_entries(
+        self,
+        entry_ids: List[int],
+        move_to_archive: bool = True,
+    ) -> Dict[str, int]:
+        """
+        Delete specific history entries by their IDs.
+
+        If move_to_archive is True, copies entries to archive_history before deleting.
+        This follows the same pattern as archive_history for consistency.
+
+        Args:
+            entry_ids: List of history entry IDs to delete
+            move_to_archive: If True, archive before deleting
+
+        Returns: {"archived": count, "deleted": count}
+        """
+        if not entry_ids:
+            return {"archived": 0, "deleted": 0}
+
+        # Fetch entries to delete
+        entries = (
+            self.db.query(HistoryEntry)
+            .filter(HistoryEntry.id.in_(entry_ids))
+            .all()
+        )
+
+        if not entries:
+            return {"archived": 0, "deleted": 0}
+
+        archived_count = 0
+        if move_to_archive:
+            archived = [
+                ArchiveHistory(
+                    original_id=e.id,
+                    event_type=e.event_type,
+                    entity_type=e.entity_type,
+                    entity_id=e.entity_id,
+                    user_id=e.user_id,
+                    action=e.action,
+                    details=e.details,
+                    created_at=e.created_at,
+                )
+                for e in entries
+            ]
+            self.db.bulk_save_objects(archived)
+            archived_count = len(entries)
+
+        # Delete from live table
+        deleted_count = (
+            self.db.query(HistoryEntry)
+            .filter(HistoryEntry.id.in_(entry_ids))
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+
+        logger.info(
+            f"Deleted {deleted_count} specific history entries "
+            f"(archived {archived_count})"
+        )
+        return {"archived": archived_count, "deleted": deleted_count}
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Expansión 13 – Vista de Línea de Tiempo por Entidad (Fase 4)
     # ─────────────────────────────────────────────────────────────────────────
 
