@@ -458,10 +458,12 @@ class MovementListView(QWidget):
 
     movement_selected = pyqtSignal(int)
 
-    def __init__(self, db: Session, current_user_id: int, parent=None):
+    def __init__(self, db: Session, current_user_id: int, current_user=None, parent=None):
         super().__init__(parent)
         self.db = db
         self.current_user_id = current_user_id
+        self.current_user = current_user
+        self.is_employee = bool(getattr(current_user, "role", None) == "empleado")
         self.service = MovementService(db)
         self.branch_service = BranchService(db)
         self.current_branch_id = None
@@ -517,6 +519,10 @@ class MovementListView(QWidget):
         self.direct_transfer_button.setStyleSheet("background-color: #1565C0; color: white;")
         self.direct_transfer_button.clicked.connect(self.on_direct_transfer)
         header_layout.addWidget(self.direct_transfer_button)
+
+        if self.is_employee:
+            self.add_button.setVisible(False)
+            self.direct_transfer_button.setVisible(False)
 
         # Exp 5 – búsqueda por referencia
         self.reference_search = QLineEdit()
@@ -808,7 +814,7 @@ class MovementListView(QWidget):
             layout.addWidget(btn_reverse)
             return widget
 
-        if state == "pendiente":
+        if state == "pendiente" and not self.is_employee:
             btn_validate = QPushButton("Validar")
             btn_validate.setStyleSheet("background-color: #4CAF50; color: white;")
             btn_validate.clicked.connect(lambda _, m=mid: self.on_validate_movement(m))
@@ -829,7 +835,7 @@ class MovementListView(QWidget):
             btn_delete.clicked.connect(lambda _, m=mid: self.on_delete_movement(m))
             layout.addWidget(btn_delete)
 
-        elif state in ("validado", "rechazado"):
+        elif state in ("validado", "rechazado") and not self.is_employee:
             # Exp 1 – cancelar
             btn_cancel = QPushButton("Cancelar")
             btn_cancel.setStyleSheet("background-color: #757575; color: white;")

@@ -2,7 +2,7 @@
 User model for authentication and tracking.
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from core.database import Base
@@ -21,9 +21,17 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     registration_date = Column(DateTime(timezone=True), server_default=func.now())
     is_active = Column(Boolean, default=True)
+    role = Column(String(20), nullable=False, default="empleado", index=True)
+    assigned_branch_id = Column(Integer, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True, index=True)
+    is_branch_manager = Column(Boolean, nullable=False, default=False)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    last_activity = Column(DateTime(timezone=True), nullable=True)
+    is_first_login = Column(Boolean, nullable=False, default=True)
+    is_admin = Column(Boolean, default=False, nullable=True)
 
     # Relationships
     movements = relationship("Movement", back_populates="user", foreign_keys="Movement.user_id")
+    branch = relationship("Branch", foreign_keys=[assigned_branch_id], lazy="select")
 
     def __repr__(self):
         return f"<User(id={self.id}, name='{self.name}', email='{self.email}')>"
@@ -49,5 +57,12 @@ class User(Base):
             "name": self.name,
             "email": self.email,
             "registration_date": self.registration_date.isoformat() if self.registration_date else None,
-            "is_active": self.is_active
+            "is_active": self.is_active,
+            "role": self.role or "empleado",
+            "assigned_branch_id": self.assigned_branch_id,
+            "is_branch_manager": self.is_branch_manager,
+            "created_by": self.created_by,
+            "last_activity": self.last_activity.isoformat() if self.last_activity else None,
+            "is_first_login": self.is_first_login,
+            "is_admin": self.is_admin or False,
         }

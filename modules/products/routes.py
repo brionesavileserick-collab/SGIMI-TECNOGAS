@@ -678,9 +678,11 @@ class ProductListView(QWidget):
 
     product_selected = pyqtSignal(int)
 
-    def __init__(self, db: Session, parent=None):
+    def __init__(self, db: Session, current_user=None, parent=None):
         super().__init__(parent)
         self.db = db
+        self.current_user = current_user
+        self.is_employee = bool(getattr(current_user, "role", None) == "empleado")
         self.service = ProductService(db)
         self._cat_service = CategoryService(db)
         self._sup_service = SupplierService(db)
@@ -711,6 +713,8 @@ class ProductListView(QWidget):
         self.add_button = QPushButton("+ Nuevo Producto")
         self.add_button.clicked.connect(self.on_add_product)
         header.addWidget(self.add_button)
+        if self.is_employee:
+            self.add_button.setVisible(False)
         layout.addLayout(header)
 
         # Filter bar
@@ -870,10 +874,11 @@ class ProductListView(QWidget):
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(4)
 
-        edit_btn = QPushButton("Editar")
-        edit_btn.setFixedHeight(24)
-        edit_btn.clicked.connect(lambda: self.on_edit_product(product_id))
-        layout.addWidget(edit_btn)
+        if not self.is_employee:
+            edit_btn = QPushButton("Editar")
+            edit_btn.setFixedHeight(24)
+            edit_btn.clicked.connect(lambda: self.on_edit_product(product_id))
+            layout.addWidget(edit_btn)
 
         hist_btn = QPushButton("Historial")
         hist_btn.setFixedHeight(24)
@@ -890,11 +895,12 @@ class ProductListView(QWidget):
             var_btn.clicked.connect(lambda: self.on_view_variants(product_id))
             layout.addWidget(var_btn)
 
-        del_btn = QPushButton("Eliminar")
-        del_btn.setFixedHeight(24)
-        del_btn.setStyleSheet("color: #c62828;")
-        del_btn.clicked.connect(lambda: self.on_delete_product(product_id))
-        layout.addWidget(del_btn)
+        if not self.is_employee:
+            del_btn = QPushButton("Eliminar")
+            del_btn.setFixedHeight(24)
+            del_btn.setStyleSheet("color: #c62828;")
+            del_btn.clicked.connect(lambda: self.on_delete_product(product_id))
+            layout.addWidget(del_btn)
 
         return widget
 

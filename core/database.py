@@ -8,6 +8,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
 import logging
+import os
+import sqlite3
 
 from core.settings import settings
 
@@ -48,8 +50,44 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def _ensure_user_columns() -> None:
+    """Ensure the user role columns exist in existing SQLite databases."""
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        return
+
+    db_path = settings.DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "role" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'empleado'")
+        if "assigned_branch_id" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN assigned_branch_id INTEGER REFERENCES branches(id)")
+        if "is_branch_manager" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_branch_manager BOOLEAN NOT NULL DEFAULT 0")
+        if "created_by" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN created_by INTEGER REFERENCES users(id)")
+        if "last_activity" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN last_activity DATETIME")
+        if "is_first_login" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_first_login BOOLEAN NOT NULL DEFAULT 1")
+        if "is_admin" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def init_db() -> None:
     """Initialize database, creating all tables and running pending migrations."""
+    _ensure_user_columns()
+
     from models import (  # noqa: F401 – side-effects register tables with Base
         product, category, supplier, product_relation, price_history,
         branch, inventory, inventory_history, inventory_count_session,

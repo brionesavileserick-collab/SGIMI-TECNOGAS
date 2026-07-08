@@ -138,6 +138,9 @@ class Settings:
         USER_CREATED = "user.created"
         USER_UPDATED = "user.updated"
         USER_DELETED = "user.deleted"
+        USER_ROLE_CHANGED = "user.role_changed"
+        USER_ASSIGNED_TO_BRANCH = "user.assigned_to_branch"
+        USER_FIRST_LOGIN = "user.first_login"
 
         # Product expansion events
         PRODUCT_VARIANT_CREATED = "product.variant_created"

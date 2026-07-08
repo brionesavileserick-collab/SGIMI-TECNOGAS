@@ -157,12 +157,14 @@ class ReportScheduler(threading.Thread):
 class ReportsView(QWidget):
     """Main reports view widget."""
 
-    def __init__(self, db: Session, current_user_id: int = None, parent=None):
+    def __init__(self, db: Session, current_user_id: int = None, current_user=None, parent=None):
         super().__init__(parent)
         self.db = db
         self.service = ReportsService(db)
         self.branch_service = BranchService(db)
         self.current_user_id = current_user_id
+        self.current_user = current_user
+        self.is_employee = bool(getattr(current_user, "role", None) == "empleado")
         self._last_report_data: dict = {}
         self._last_report_type: str = ""
         self._setup_ui()
@@ -177,6 +179,13 @@ class ReportsView(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
+
+        if self.is_employee:
+            placeholder = QLabel("No tiene permisos para ver reportes.")
+            placeholder.setStyleSheet("font-size: 16px; font-weight: bold; color: #666;")
+            root.addWidget(placeholder, alignment=Qt.AlignmentFlag.AlignCenter)
+            self.setLayout(root)
+            return
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_controls_panel())

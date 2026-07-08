@@ -104,3 +104,34 @@ class UserRepository:
         if exclude_id:
             query = query.filter(User.id != exclude_id)
         return query.first() is not None
+
+    def get_by_role(self, role: str) -> List[User]:
+        """Get users by role."""
+        return self.db.query(User).filter(User.role == role).all()
+
+    def get_by_branch(self, branch_id: int) -> List[User]:
+        """Get users assigned to a branch."""
+        return self.db.query(User).filter(User.assigned_branch_id == branch_id).all()
+
+    def get_gerentes_by_branch(self, branch_id: int) -> List[User]:
+        """Get branch managers by branch."""
+        return self.db.query(User).filter(User.assigned_branch_id == branch_id, User.role == "gerente").all()
+
+    def get_empleados_by_branch(self, branch_id: int) -> List[User]:
+        """Get employees by branch."""
+        return self.db.query(User).filter(User.assigned_branch_id == branch_id, User.role == "empleado").all()
+
+    def get_admins(self) -> List[User]:
+        """Get all admins."""
+        return self.db.query(User).filter(User.role == "admin").all()
+
+    def update_last_activity(self, user_id: int) -> None:
+        """Update the last activity timestamp."""
+        user = self.get_by_id(user_id)
+        if user:
+            user.last_activity = func.now()
+            self.db.commit()
+
+    def exists_by_email(self, email: str) -> bool:
+        """Alias for email_exists."""
+        return self.email_exists(email)

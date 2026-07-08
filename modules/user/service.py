@@ -8,6 +8,8 @@ from modules.user.repository import UserRepository
 from core.event_bus import event_bus
 from core.settings import settings
 from utils.validators import validate_name, validate_email, validate_password
+from models.user import User
+from models.user_activity_log import UserActivityLog
 import logging
 
 logger = logging.getLogger(__name__)
@@ -17,13 +19,43 @@ class UserService:
     """Service for user business logic."""
 
     def __init__(self, db: Session):
+        self.db = db
         self.repository = UserRepository(db)
 
-    def create_user(self, user_data: dict, password: str) -> Dict[str, Any]:
+    def create_user(self, user_data: dict, password: str, created_by_user: Optional[User] = None) -> Dict[str, Any]:
         """Create a new user."""
         user_data = self._sanitize_user_data(user_data)
         self._validate_user_data(user_data, require_required=True)
-        
+
+        role = user_data.get("role")
+        if not role:
+            raise ValueError("El campo 'role' es obligatorio")
+        if role not in ("admin", "gerente", "empleado"):
+            raise ValueError("Rol inválido. Use: admin, gerente o empleado")
+
+        if role == "admin":
+            user_data["assigned_branch_id"] = None
+            user_data["is_branch_manager"] = False
+        elif role in ("gerente", "empleado"):
+            if not user_data.get("assigned_branch_id"):
+                raise ValueError("Sucursal asignada es obligatoria para gerente y empleado")
+            if role == "gerente":
+                user_data["is_branch_manager"] = True
+
+        if created_by_user is not None:
+            if created_by_user.role == "empleado":
+                raise PermissionError("Empleados no pueden crear usuarios")
+            if created_by_user.role == "gerente" and role != "empleado":
+                raise PermissionError("Gerentes solo pueden crear empleados")
+
+        user_data.setdefault("is_first_login", True)
+        user_data.setdefault("is_active", True)
+        user_data.setdefault("role", "empleado")
+        user_data.setdefault("is_branch_manager", False)
+        user_data.setdefault("is_admin", False)
+        if created_by_user is not None:
+            user_data["created_by"] = created_by_user.id
+
         # Validate password
         is_valid, error = validate_password(password, settings.PASSWORD_MIN_LENGTH)
         if not is_valid:
@@ -36,18 +68,21 @@ class UserService:
         # Create user
         user = self.repository.create(user_data)
         user.set_password(password)
-        self.db = self.repository.db
         self.db.commit()
         self.db.refresh(user)
-        
+
+        self.log_activity(created_by_user.id if created_by_user else None, "create_user", user.id, {"role": user.role})
+
         # Emit event
         event_data = {
             "user_id": user.id,
             "name": user.name,
-            "email": user.email
+            "email": user.email,
+            "role": user.role,
+            "assigned_branch_id": user.assigned_branch_id,
         }
         event_bus.emit(settings.Events.USER_CREATED, event_data)
-        
+
         logger.info(f"User created: {user.email}")
         return user.to_dict()
 
@@ -77,6 +112,9 @@ class UserService:
 
     def update_user(self, user_id: int, update_data: dict, password: str = None) -> Optional[Dict[str, Any]]:
         """Update user."""
+        if "role" in update_data:
+            raise ValueError("El rol no se puede cambiar")
+
         update_data = self._sanitize_user_data(update_data)
         self._validate_user_data(update_data, require_required=False)
 
@@ -95,9 +133,10 @@ class UserService:
             if not is_valid:
                 raise ValueError(error)
             user.set_password(password)
-            self.db = self.repository.db
             self.db.commit()
             self.db.refresh(user)
+
+        self.log_activity(user.id, "update_user", user.id, {"changes": update_data})
 
         # Emit event
         event_data = {
@@ -119,6 +158,7 @@ class UserService:
 
         success = self.repository.delete(user_id)
         if success:
+            self.log_activity(user.id, "delete_user", user_id, {"deleted": True})
             # Emit event
             event_data = {
                 "user_id": user_id,
@@ -126,7 +166,7 @@ class UserService:
                 "email": user.email
             }
             event_bus.emit(settings.Events.USER_DELETED, event_data)
-            
+
             logger.info(f"User deleted: {user.email}")
 
         return success
@@ -141,6 +181,45 @@ class UserService:
         users = self.repository.get_all(limit=1000)
         return [u.to_dict() for u in users]
 
+    def has_branch_access(self, user: User, branch_id: int) -> bool:
+        """Verify whether a user can access a branch."""
+        if user.role == "admin":
+            return True
+        return user.assigned_branch_id == branch_id
+
+    def can_create_user(self, creator: User, target_role: str) -> bool:
+        """Verify whether a creator can create a user of a given role."""
+        if creator.role == "admin":
+            return True
+        if creator.role == "gerente" and target_role == "empleado":
+            return True
+        return False
+
+    def can_edit_user(self, editor: User, target_user: User) -> bool:
+        """Verify whether an editor can modify another user."""
+        if editor.role == "admin":
+            return True
+        if editor.role == "gerente":
+            return target_user.role == "empleado" and target_user.assigned_branch_id == editor.assigned_branch_id
+        return False
+
+    def filter_by_access(self, user: User, query):
+        """Filter a query according to user access."""
+        if user.role == "admin":
+            return query
+        return query.filter(User.assigned_branch_id == user.assigned_branch_id)
+
+    def log_activity(self, user_id: Optional[int], action: str, target_user_id: Optional[int] = None, details: Optional[Dict[str, Any]] = None):
+        """Register basic user activity."""
+        entry = UserActivityLog(
+            user_id=user_id,
+            action=action,
+            target_user_id=target_user_id,
+            details=str(details) if details is not None else None,
+        )
+        self.db.add(entry)
+        self.db.commit()
+
     def _sanitize_user_data(self, user_data: dict) -> dict:
         """Normalize user input before persistence."""
         data = user_data.copy()
@@ -148,6 +227,8 @@ class UserService:
             data["name"] = data["name"].strip()
         if "email" in data and data["email"]:
             data["email"] = data["email"].strip().lower()
+        if "role" in data and data["role"]:
+            data["role"] = data["role"].strip().lower()
         return data
 
     def _validate_user_data(self, user_data: dict, require_required: bool) -> None:

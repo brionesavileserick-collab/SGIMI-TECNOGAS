@@ -619,7 +619,7 @@ class MainWindow(QMainWindow):
         self.content_stack.addWidget(self.dashboard_view)
 
         # Products
-        self.products_view = ProductListView(self.db)
+        self.products_view = ProductListView(self.db, current_user=self.user)
         self.content_stack.addWidget(self.products_view)
 
         # Branches
@@ -627,11 +627,11 @@ class MainWindow(QMainWindow):
         self.content_stack.addWidget(self.branches_view)
 
         # Inventory
-        self.inventory_view = InventoryListView(self.db)
+        self.inventory_view = InventoryListView(self.db, current_user=self.user)
         self.content_stack.addWidget(self.inventory_view)
 
         # Movements
-        self.movements_view = MovementListView(self.db, self.user.id)
+        self.movements_view = MovementListView(self.db, self.user.id, current_user=self.user)
         self.content_stack.addWidget(self.movements_view)
 
         # Alerts
@@ -643,7 +643,7 @@ class MainWindow(QMainWindow):
         self.content_stack.addWidget(self.history_view)
 
         # Reports
-        self.reports_view = ReportsView(self.db)
+        self.reports_view = ReportsView(self.db, current_user=self.user)
         self.content_stack.addWidget(self.reports_view)
 
         # Communication
@@ -651,7 +651,7 @@ class MainWindow(QMainWindow):
         self.content_stack.addWidget(self.communication_view)
 
         # Users
-        self.users_view = UserListView(self.db)
+        self.users_view = UserListView(self.db, current_user=self.user)
         self.content_stack.addWidget(self.users_view)
 
         # ── Populate mode combo + menu with active branches ───────────

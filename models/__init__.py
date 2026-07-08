@@ -3,6 +3,7 @@ Models package initialization.
 """
 
 from models.user import User
+from models.user_activity_log import UserActivityLog
 from models.branch import Branch
 from models.category import Category
 from models.supplier import Supplier
@@ -28,7 +29,7 @@ from modules.alerts.service import Alert
 from modules.history.service import HistoryEntry
 
 __all__ = [
-    "User", "Branch",
+    "User", "UserActivityLog", "Branch",
     "Product", "Category", "Supplier", "ProductRelation", "PriceHistory", "ProductChangeHistory", "KitComponent",
     "Inventory", "InventoryHistory", "InventoryCountSession", "InventoryCountItem", "InventoryBatch",
     "Movement", "MovementType", "MovementState", "MovementPriority", "MovementSource",

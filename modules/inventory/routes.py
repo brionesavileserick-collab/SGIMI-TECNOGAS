@@ -930,9 +930,11 @@ class InventoryListView(QWidget):
         ("Acciones",      None),                   # 13
     ]
 
-    def __init__(self, db: Session, parent=None):
+    def __init__(self, db: Session, current_user=None, parent=None):
         super().__init__(parent)
         self.db = db
+        self.current_user = current_user
+        self.is_employee = bool(getattr(current_user, "role", None) == "empleado")
         self.service = InventoryService(db)
         self.branch_service = BranchService(db)
         self.product_service = ProductService(db)
@@ -1015,6 +1017,8 @@ class InventoryListView(QWidget):
         self.count_session_btn = QPushButton("📅 Sesiones de Conteo")
         self.count_session_btn.clicked.connect(self.on_count_sessions)
         actions.addWidget(self.count_session_btn)
+        if self.is_employee:
+            self.count_session_btn.setVisible(False)
 
         # Global-view toggle — only shown in matrix mode
         self.global_view_btn = QPushButton("🌐 Vista Global")
@@ -1033,6 +1037,11 @@ class InventoryListView(QWidget):
         self.reorder_btn = QPushButton("🔄 Reposición Urgente")
         self.reorder_btn.clicked.connect(self.show_reorder_report)
         actions.addWidget(self.reorder_btn)
+
+        if self.is_employee:
+            self.distribution_btn.setVisible(False)
+            self.metrics_btn.setVisible(False)
+            self.reorder_btn.setVisible(False)
 
         actions.addStretch()
         layout.addLayout(actions)
@@ -1259,10 +1268,11 @@ class InventoryListView(QWidget):
         lay.setContentsMargins(4, 2, 4, 2)
         lay.setSpacing(4)
 
-        edit_btn = QPushButton("✏ Editar")
-        edit_btn.setFixedHeight(26)
-        edit_btn.clicked.connect(lambda _, i=item: self._on_edit_item(i))
-        lay.addWidget(edit_btn)
+        if not self.is_employee:
+            edit_btn = QPushButton("✏ Editar")
+            edit_btn.setFixedHeight(26)
+            edit_btn.clicked.connect(lambda _, i=item: self._on_edit_item(i))
+            lay.addWidget(edit_btn)
 
         hist_btn = QPushButton("📜 Historial")
         hist_btn.setFixedHeight(26)
