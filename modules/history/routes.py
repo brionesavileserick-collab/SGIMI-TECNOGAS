@@ -555,14 +555,14 @@ class ArchiveDialog(QDialog):
         self.date_from = QDateEdit()
         self.date_from.setCalendarPopup(True)
         self.date_from.setDate(QDate.currentDate().addMonths(-3))
-        self.date_from.valueChanged.connect(self._update_estimate)
+        self.date_from.dateChanged.connect(self._update_estimate)
         date_layout.addWidget(self.date_from)
 
         date_layout.addWidget(QLabel("Hasta:"))
         self.date_to = QDateEdit()
         self.date_to.setCalendarPopup(True)
         self.date_to.setDate(QDate.currentDate().addDays(-1))
-        self.date_to.valueChanged.connect(self._update_estimate)
+        self.date_to.dateChanged.connect(self._update_estimate)
         date_layout.addWidget(self.date_to)
 
         layout.addWidget(date_box)
@@ -1311,41 +1311,53 @@ class HistoryListView(QWidget):
 
     def _on_archive(self):
         """Handle Archivar y Limpiar button (Expansión 7 + Expansión 12)."""
-        dlg = ArchiveDialog(self.db, self.service, self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        date_from, date_to = dlg.get_range()
-        entity_type = dlg.get_entity_type()
-
-        confirm = QMessageBox.question(
-            self,
-            "Confirmar archivado",
-            f"¿Archivar y eliminar registros entre\n"
-            f"{date_from.date()} y {date_to.date()}?\n\n"
-            f"Esta acción no se puede deshacer.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
+        logger.info("_on_archive: Starting archive process")
         try:
+            dlg = ArchiveDialog(self.db, self.service, self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                logger.info("_on_archive: Dialog cancelled")
+                return
+            date_from, date_to = dlg.get_range()
+            entity_type = dlg.get_entity_type()
+            logger.info(f"_on_archive: date_from={date_from}, date_to={date_to}, entity_type={entity_type}")
+
+            confirm = QMessageBox.question(
+                self,
+                "Confirmar archivado",
+                f"¿Archivar y eliminar registros entre\n"
+                f"{date_from.date()} y {date_to.date()}?\n\n"
+                f"Esta acción no se puede deshacer.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                logger.info("_on_archive: User cancelled confirmation")
+                return
+
+            logger.info("_on_archive: User confirmed, starting archive operation")
             if entity_type:
                 # Expansión 12 – limpiar por tipo específico
+                logger.info(f"_on_archive: Calling clear_by_entity_type for {entity_type}")
                 result = self.service.clear_by_entity_type(
                     entity_type,
                     days=None,  # Use from date instead
                     move_to_archive=True
                 )
                 count = result["deleted"]
+                logger.info(f"_on_archive: clear_by_entity_type completed, count={count}")
             else:
                 # Archive all within date range
+                logger.info("_on_archive: Calling archive_history with date range")
                 count = self.service.archive_history(date_from, date_to)
+                logger.info(f"_on_archive: archive_history completed, count={count}")
+
             QMessageBox.information(
                 self, "Archivado completado",
-                f"{count} registros archivados y eliminados del historial activo."
+                f"{count} registros archivados y eliminados del historial activo.\n\n"
+                f"Por favor, presiona el botón 'Actualizar' para ver los cambios."
             )
-            self.load_data()
+            logger.info("_on_archive: Process completed successfully - manual refresh required")
         except Exception as exc:
-            logger.exception("Archive error")
+            logger.exception("_on_archive: Exception occurred")
             QMessageBox.critical(self, "Error en archivado", str(exc))
 
     def _on_outdated(self):

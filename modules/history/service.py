@@ -664,17 +664,20 @@ class HistoryService:
                 created_at=entry.created_at,
             ))
 
-        self.db.bulk_save_objects(archived)
+        try:
+            self.db.bulk_save_objects(archived)
 
-        # Delete from live table
-        ids_to_delete = [e.id for e in entries]
-        self.db.query(HistoryEntry).filter(HistoryEntry.id.in_(ids_to_delete)).delete(
-            synchronize_session=False
-        )
+            # Delete from live table - delete one by one to avoid session issues
+            for entry in entries:
+                self.db.delete(entry)
 
-        self.db.commit()
-        logger.info(f"Archived {len(entries)} history entries")
-        return len(entries)
+            self.db.commit()
+            logger.info(f"Archived {len(entries)} history entries")
+            return len(entries)
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Error archiving history: {e}")
+            raise
 
     def get_archived_history(
         self,
@@ -952,12 +955,12 @@ class HistoryService:
             self.db.bulk_save_objects(archived)
             archived_count = len(entries)
 
-        ids_to_delete = [e.id for e in entries]
-        deleted_count = (
-            self.db.query(HistoryEntry)
-            .filter(HistoryEntry.id.in_(ids_to_delete))
-            .delete(synchronize_session=False)
-        )
+        # Delete from live table - delete one by one to avoid session issues
+        deleted_count = 0
+        for entry in entries:
+            self.db.delete(entry)
+            deleted_count += 1
+
         self.db.commit()
 
         logger.info(
@@ -1042,12 +1045,11 @@ class HistoryService:
             self.db.bulk_save_objects(archived)
             archived_count = len(entries)
 
-        # Delete from live table
-        deleted_count = (
-            self.db.query(HistoryEntry)
-            .filter(HistoryEntry.id.in_(entry_ids))
-            .delete(synchronize_session=False)
-        )
+        # Delete from live table - delete one by one to avoid session issues
+        deleted_count = 0
+        for entry in entries:
+            self.db.delete(entry)
+            deleted_count += 1
         self.db.commit()
 
         logger.info(
