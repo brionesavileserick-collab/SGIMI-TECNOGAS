@@ -96,3 +96,16 @@ ALERT_PRIORITIES = {
     "normal": "Normal",
     "high": "Alta",
 }
+
+# History retention policy by entity type (days)
+# Expansion 12: Retención personalizada por tipo de entidad
+RETENTION_DAYS = {
+    "system": 180,           # System logs: 6 months
+    "movement": 365,         # Movements: 1 year
+    "inventory": 180,        # Inventory: 6 months
+    "product": 99999,        # Products: essentially forever (27+ years)
+    "branch": 99999,         # Branches: essentially forever
+    "branch_config": 365,    # Branch config changes: 1 year
+    "alert": 90,             # Alerts: 3 months
+    "user": 99999,           # User records: essentially forever
+}

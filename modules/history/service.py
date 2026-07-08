@@ -703,3 +703,343 @@ class HistoryService:
             "skip": skip,
             "limit": limit,
         }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 10 – Integración con Historial de Configuración de Sucursal (Fase 1)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def record_branch_config_change(
+        self,
+        branch_id: int,
+        field: str,
+        old_value: Any,
+        new_value: Any,
+        changed_by_name: str = None,
+        user_id: int = None,
+        reason: str = None,
+    ) -> Dict[str, Any]:
+        """
+        Record a branch configuration change in the history.
+
+        This method is called from BranchService when config is modified.
+        Allows unified audit trail of all branch config changes.
+
+        Args:
+            branch_id: ID of the branch being modified
+            field: Field name that changed (e.g., "min_stock", "operational_status")
+            old_value: Previous value
+            new_value: New value
+            changed_by_name: Human-readable name of who made the change
+            user_id: User ID (if available)
+            reason: Optional reason for the change
+        """
+        details = {
+            "branch_id": branch_id,
+            "field": field,
+            "changes": {
+                field: {
+                    "before": old_value,
+                    "after": new_value,
+                }
+            },
+        }
+        if reason:
+            details["reason"] = reason
+        if changed_by_name:
+            details["changed_by_name"] = changed_by_name
+
+        return self.record_event(
+            event_type="branch.config_changed",
+            entity_type="branch_config",
+            entity_id=branch_id,
+            user_id=user_id,
+            action=f"Configuración de sucursal {field}: {old_value} → {new_value}",
+            details=details,
+        )
+
+    def get_branch_config_history(
+        self,
+        branch_id: int,
+        limit: int = 100,
+        date_from: datetime = None,
+        date_to: datetime = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all configuration changes for a specific branch.
+
+        Returns entries with entity_type='branch_config' and entity_id=branch_id,
+        sorted by date descending.
+        """
+        query = (
+            self.db.query(HistoryEntry)
+            .filter(
+                HistoryEntry.entity_type == "branch_config",
+                HistoryEntry.entity_id == branch_id,
+            )
+        )
+        if date_from:
+            query = query.filter(HistoryEntry.created_at >= date_from)
+        if date_to:
+            query = query.filter(HistoryEntry.created_at <= date_to)
+
+        entries = query.order_by(HistoryEntry.created_at.desc()).limit(limit).all()
+        return [e.to_dict() for e in entries]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 11 – Filtro por Múltiples Sucursales (Fase 2)
+    # Modificación a list_history() para soportar branch_ids (list) además de branch_id (int)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def list_history_with_multi_branch(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        event_type: str = None,
+        entity_type: str = None,
+        entity_id: int = None,
+        user_id: int = None,
+        branch_id: int = None,          # Single branch (backward compat)
+        branch_ids: List[int] = None,   # Multiple branches
+        date_from: datetime = None,
+        date_to: datetime = None,
+        enrich: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Extended list_history that supports filtering by multiple branch IDs.
+
+        branch_id: For backward compatibility, single branch filter
+        branch_ids: New parameter, list of branch IDs to filter by (OR logic)
+
+        If branch_ids is provided, it takes precedence over branch_id.
+        If neither is provided, no branch filtering is applied.
+        """
+        query = self.db.query(HistoryEntry)
+
+        if event_type:
+            query = query.filter(HistoryEntry.event_type == event_type)
+
+        if entity_type:
+            query = query.filter(HistoryEntry.entity_type == entity_type)
+
+        if entity_id:
+            query = query.filter(HistoryEntry.entity_id == entity_id)
+
+        if user_id:
+            query = query.filter(HistoryEntry.user_id == user_id)
+
+        if date_from:
+            query = query.filter(HistoryEntry.created_at >= date_from)
+
+        if date_to:
+            query = query.filter(HistoryEntry.created_at <= date_to)
+
+        # Multi-branch filter (Expansión 11)
+        if branch_ids:
+            # Build OR conditions for each branch_id in the list
+            from sqlalchemy import or_
+            conditions = []
+            for bid in branch_ids:
+                branch_pattern = f'%"branch_id": {bid}%'
+                dest_pattern = f'%"destination_branch_id": {bid}%'
+                conditions.append(HistoryEntry.details.ilike(branch_pattern))
+                conditions.append(HistoryEntry.details.ilike(dest_pattern))
+            if conditions:
+                query = query.filter(or_(*conditions))
+        elif branch_id is not None:
+            # Single branch (backward compat)
+            branch_pattern = f'%"branch_id": {branch_id}%'
+            dest_pattern = f'%"destination_branch_id": {branch_id}%'
+            from sqlalchemy import or_
+            query = query.filter(
+                or_(
+                    HistoryEntry.details.ilike(branch_pattern),
+                    HistoryEntry.details.ilike(dest_pattern),
+                )
+            )
+
+        total = query.count()
+        entries_orm = (
+            query.order_by(HistoryEntry.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+        entries = [e.to_dict() for e in entries_orm]
+        if enrich:
+            entries = [self.enrich_entry(e) for e in entries]
+
+        return {
+            "entries": entries,
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 12 – Retención Personalizada por Tipo de Entidad (Fase 3)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Default retention days by entity type
+    _DEFAULT_RETENTION: Dict[str, int] = {
+        "system": 180,
+        "movement": 365,
+        "inventory": 180,
+        "product": 99999,      # Essentially never (25+ years)
+        "branch": 99999,
+        "branch_config": 365,
+        "alert": 90,
+        "user": 99999,
+    }
+
+    def get_retention_days(self, entity_type: str) -> int:
+        """
+        Get retention days for an entity type.
+
+        Checks config.py for RETENTION_DAYS override, falls back to defaults.
+        """
+        try:
+            from config import RETENTION_DAYS
+            if entity_type in RETENTION_DAYS:
+                return RETENTION_DAYS[entity_type]
+        except ImportError:
+            pass
+        return self._DEFAULT_RETENTION.get(entity_type, 180)
+
+    def clear_by_entity_type(
+        self,
+        entity_type: str,
+        days: int = None,
+        move_to_archive: bool = True,
+    ) -> Dict[str, int]:
+        """
+        Clear history entries of a specific entity_type older than specified days.
+
+        If days is None, uses the retention period for that entity_type.
+        If move_to_archive is True, archives before deleting.
+
+        Returns: {"archived": count, "deleted": count}
+        """
+        if days is None:
+            days = self.get_retention_days(entity_type)
+
+        cutoff = datetime.utcnow() - timedelta(days=days)
+
+        query = self.db.query(HistoryEntry).filter(
+            HistoryEntry.entity_type == entity_type,
+            HistoryEntry.created_at < cutoff,
+        )
+
+        entries = query.all()
+        if not entries:
+            return {"archived": 0, "deleted": 0}
+
+        archived_count = 0
+        if move_to_archive:
+            archived = [
+                ArchiveHistory(
+                    original_id=e.id,
+                    event_type=e.event_type,
+                    entity_type=e.entity_type,
+                    entity_id=e.entity_id,
+                    user_id=e.user_id,
+                    action=e.action,
+                    details=e.details,
+                    created_at=e.created_at,
+                )
+                for e in entries
+            ]
+            self.db.bulk_save_objects(archived)
+            archived_count = len(entries)
+
+        ids_to_delete = [e.id for e in entries]
+        deleted_count = (
+            self.db.query(HistoryEntry)
+            .filter(HistoryEntry.id.in_(ids_to_delete))
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+
+        logger.info(
+            f"Cleared {deleted_count} entries of type '{entity_type}' "
+            f"(archived {archived_count})"
+        )
+        return {"archived": archived_count, "deleted": deleted_count}
+
+    def estimate_retention_cleanup(self) -> Dict[str, int]:
+        """
+        Estimate how many entries would be deleted for each entity_type
+        based on current retention policy.
+
+        Useful for showing user estimates before cleanup.
+        Returns: {entity_type: count_to_be_deleted, ...}
+        """
+        estimates = {}
+        for entity_type in self._DEFAULT_RETENTION.keys():
+            retention_days = self.get_retention_days(entity_type)
+            cutoff = datetime.utcnow() - timedelta(days=retention_days)
+            count = (
+                self.db.query(HistoryEntry)
+                .filter(
+                    HistoryEntry.entity_type == entity_type,
+                    HistoryEntry.created_at < cutoff,
+                )
+                .count()
+            )
+            if count > 0:
+                estimates[entity_type] = count
+        return estimates
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Expansión 13 – Vista de Línea de Tiempo por Entidad (Fase 4)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_entity_timeline(
+        self,
+        entity_type: str,
+        entity_id: int,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get complete timeline for a specific entity (chronological order).
+
+        Returns list of entries with additional computed fields:
+          - timeline_label: Human-readable event summary
+          - timeline_category: Event classification for visual grouping
+
+        Sorted by created_at ascending (earliest first) for timeline view.
+        """
+        entries = (
+            self.db.query(HistoryEntry)
+            .filter(
+                HistoryEntry.entity_type == entity_type,
+                HistoryEntry.entity_id == entity_id,
+            )
+            .order_by(HistoryEntry.created_at.asc())
+            .limit(limit)
+            .all()
+        )
+
+        result = []
+        for entry in entries:
+            entry_dict = entry.to_dict()
+            # Enrich with timeline-specific fields
+            entry_dict["user_name"] = self.get_user_name(entry.user_id)
+            entry_dict["timeline_label"] = entry.action or entry.event_type
+            # Categorize for UI grouping
+            if entry.event_type.startswith("movement"):
+                entry_dict["timeline_category"] = "Movimiento"
+            elif entry.event_type.startswith("inventory"):
+                entry_dict["timeline_category"] = "Inventario"
+            elif entry.event_type.startswith("alert"):
+                entry_dict["timeline_category"] = "Alerta"
+            elif entry.event_type.startswith("product"):
+                entry_dict["timeline_category"] = "Producto"
+            elif entry.event_type.startswith("branch"):
+                entry_dict["timeline_category"] = "Sucursal"
+            else:
+                entry_dict["timeline_category"] = "Otro"
+
+            result.append(entry_dict)
+
+        return result
