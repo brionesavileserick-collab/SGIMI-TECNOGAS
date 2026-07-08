@@ -164,6 +164,8 @@ class ProductDialog(QDialog):
 
         self.category_combo = QComboBox()
         self.category_combo.setMinimumWidth(200)
+        self.category_combo.setEditable(True)
+        self.category_combo.setPlaceholderText("Seleccionar o escribir nueva categoría")
         form.addRow("Categoría:", self.category_combo)
 
         self.brand_input = QLineEdit()
@@ -172,6 +174,8 @@ class ProductDialog(QDialog):
 
         self.supplier_combo = QComboBox()
         self.supplier_combo.setMinimumWidth(200)
+        self.supplier_combo.setEditable(True)
+        self.supplier_combo.setPlaceholderText("Seleccionar o escribir nuevo proveedor")
         form.addRow("Proveedor:", self.supplier_combo)
 
         self.unit_input = QLineEdit()
@@ -191,6 +195,8 @@ class ProductDialog(QDialog):
 
         self.replacement_combo = QComboBox()
         self.replacement_combo.setMinimumWidth(200)
+        self.replacement_combo.setEditable(True)
+        self.replacement_combo.setPlaceholderText("Seleccionar o escribir producto")
         self.replacement_combo.setToolTip(
             "Producto que reemplaza a este cuando está descontinuado"
         )
@@ -243,6 +249,7 @@ class ProductDialog(QDialog):
 
         self.parent_product_combo = QComboBox()
         self.parent_product_combo.setMinimumWidth(220)
+        self.parent_product_combo.setEditable(True)
         self.parent_product_combo.setToolTip("Producto padre del que deriva esta variante")
         form.addRow("Producto Padre:", self.parent_product_combo)
 
@@ -283,6 +290,8 @@ class ProductDialog(QDialog):
         search_row = QHBoxLayout()
         self.kit_component_combo = QComboBox()
         self.kit_component_combo.setMinimumWidth(200)
+        self.kit_component_combo.setEditable(True)
+        self.kit_component_combo.setPlaceholderText("Seleccionar o escribir producto")
         self.kit_component_combo.setEnabled(False)
         search_row.addWidget(QLabel("Componente:"))
         search_row.addWidget(self.kit_component_combo)
@@ -487,9 +496,9 @@ class ProductDialog(QDialog):
         self.kit_table.setItem(row, 3, QTableWidgetItem(str(qty)))
 
     def _on_kit_add_component(self):
-        comp_id = _combo_current_id(self.kit_component_combo)
+        comp_id = self._find_product_by_text(self.kit_component_combo)
         if comp_id is None:
-            QMessageBox.warning(self, "Error", "Selecciona un componente")
+            QMessageBox.warning(self, "Error", "Selecciona un componente válido")
             return
         qty = self.kit_qty_spin.value()
 
@@ -528,6 +537,76 @@ class ProductDialog(QDialog):
     # get_data
     # ------------------------------------------------------------------
 
+    def _get_or_create_category_id(self) -> Optional[int]:
+        """Get category ID from combo, or create new category if text doesn't match."""
+        current_text = self.category_combo.currentText().strip()
+        if not current_text or current_text == "— Sin categoría —":
+            return None
+        
+        # Check if current text matches an existing item
+        for i in range(self.category_combo.count()):
+            if self.category_combo.itemText(i) == current_text:
+                return _combo_current_id(self.category_combo)
+        
+        # Create new category
+        try:
+            new_cat = self._cat_service.create_category({"name": current_text})
+            # Add to combo for future use
+            self.category_combo.addItem(current_text, new_cat["id"])
+            return new_cat["id"]
+        except Exception as exc:
+            logger.warning(f"Could not create category '{current_text}': {exc}")
+            return None
+
+    def _get_or_create_supplier_id(self) -> Optional[int]:
+        """Get supplier ID from combo, or create new supplier if text doesn't match."""
+        current_text = self.supplier_combo.currentText().strip()
+        if not current_text or current_text == "— Sin proveedor —":
+            return None
+        
+        # Check if current text matches an existing item
+        for i in range(self.supplier_combo.count()):
+            if self.supplier_combo.itemText(i) == current_text:
+                return _combo_current_id(self.supplier_combo)
+        
+        # Create new supplier
+        try:
+            new_sup = self._sup_service.create_supplier({"name": current_text})
+            # Add to combo for future use
+            self.supplier_combo.addItem(current_text, new_sup["id"])
+            return new_sup["id"]
+        except Exception as exc:
+            logger.warning(f"Could not create supplier '{current_text}': {exc}")
+            return None
+
+    def _find_product_by_text(self, combo: QComboBox) -> Optional[int]:
+        """Find product ID by searching text (SKU or name) in combo."""
+        current_text = combo.currentText().strip()
+        if not current_text or current_text.startswith("— "):
+            return None
+        
+        # Check if current text matches an existing item
+        for i in range(combo.count()):
+            if combo.itemText(i) == current_text:
+                return _combo_current_id(combo)
+        
+        # Try to find product by SKU or name in database
+        try:
+            # First try by exact SKU
+            product = self._product_service.get_product_by_sku(current_text)
+            if product:
+                return product["id"]
+            
+            # Then try by name
+            products = self._product_service.search_products(current_text, limit=10)
+            for p in products:
+                if p["name"].lower() == current_text.lower():
+                    return p["id"]
+        except Exception as exc:
+            logger.warning(f"Could not find product '{current_text}': {exc}")
+        
+        return None
+
     def get_data(self) -> dict:
         """Return all form values as a dict ready for ProductService."""
         min_stock = self.min_stock_input.value()
@@ -537,18 +616,18 @@ class ProductDialog(QDialog):
             "name": self.name_input.text().strip(),
             "unit_of_measure": self.unit_input.text().strip() or "unidad",
             "unit_price": self.price_input.value(),
-            "category_id": _combo_current_id(self.category_combo),
+            "category_id": self._get_or_create_category_id(),
             "brand": self.brand_input.text().strip() or None,
-            "default_supplier_id": _combo_current_id(self.supplier_combo),
+            "default_supplier_id": self._get_or_create_supplier_id(),
             "product_status": self.status_combo.currentData() or "active",
-            "replacement_product_id": _combo_current_id(self.replacement_combo),
+            "replacement_product_id": self._find_product_by_text(self.replacement_combo),
             # Detail
             "description": self.description_input.toPlainText().strip() or None,
             "details": self.details_input.toPlainText().strip() or None,
             "internal_notes": self.notes_input.toPlainText().strip() or None,
             "global_min_stock": min_stock if min_stock > 0 else None,
             # Variant
-            "parent_product_id": _combo_current_id(self.parent_product_combo),
+            "parent_product_id": self._find_product_by_text(self.parent_product_combo),
             "variant_group_id": self.variant_group_input.text().strip() or None,
             "variant_attributes": self.variant_attributes_input.text().strip() or None,
             # Kit
