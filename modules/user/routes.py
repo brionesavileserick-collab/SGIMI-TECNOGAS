@@ -281,6 +281,10 @@ class UserListView(QWidget):
                 password = data.pop("password", None)
                 data.pop("confirm_password", None)
 
+                # Ensure role is preserved
+                if "role" not in data:
+                    data["role"] = "empleado"
+
                 self.service.create_user(data, password, created_by_user=self.current_user)
                 QMessageBox.information(self, "Exito", "Usuario creado exitosamente")
                 self.load_users()

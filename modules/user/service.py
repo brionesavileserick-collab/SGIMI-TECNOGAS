@@ -50,7 +50,9 @@ class UserService:
 
         user_data.setdefault("is_first_login", True)
         user_data.setdefault("is_active", True)
-        user_data.setdefault("role", "empleado")
+        # Don't override role if already set
+        if "role" not in user_data:
+            user_data["role"] = "empleado"
         user_data.setdefault("is_branch_manager", False)
         user_data.setdefault("is_admin", False)
         if created_by_user is not None:

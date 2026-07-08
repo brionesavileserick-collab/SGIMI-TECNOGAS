@@ -215,6 +215,10 @@ class RegisterDialog(QDialog):
         self.email_input = QLineEdit()
         form_layout.addRow("Correo*:", self.email_input)
 
+        self.role_combo = QComboBox()
+        self.role_combo.addItems(["Empleado", "Gerente", "Administrador"])
+        form_layout.addRow("Rol*:", self.role_combo)
+
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         form_layout.addRow("Contrasena*:", self.password_input)
@@ -238,6 +242,9 @@ class RegisterDialog(QDialog):
         email = self.email_input.text().strip().lower()
         password = self.password_input.text()
         confirm_password = self.confirm_password_input.text()
+        
+        role_map = {"Empleado": "empleado", "Gerente": "gerente", "Administrador": "admin"}
+        role = role_map.get(self.role_combo.currentText(), "empleado")
 
         validations = [
             validate_name(name, "Nombre"),
@@ -258,7 +265,7 @@ class RegisterDialog(QDialog):
             return
 
         try:
-            user = User(name=name, email=email)
+            user = User(name=name, email=email, role=role)
             user.set_password(password)
             self.db.add(user)
             self.db.commit()
@@ -307,6 +314,10 @@ class FirstRunDialog(QDialog):
         self.email_input = QLineEdit()
         form_layout.addRow("Correo:", self.email_input)
 
+        self.role_combo = QComboBox()
+        self.role_combo.addItems(["Administrador", "Gerente", "Empleado"])
+        form_layout.addRow("Rol:", self.role_combo)
+
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         form_layout.addRow("Contrasena:", self.password_input)
@@ -330,6 +341,9 @@ class FirstRunDialog(QDialog):
         email = self.email_input.text().strip().lower()
         password = self.password_input.text()
         confirm_password = self.confirm_password_input.text()
+        
+        role_map = {"Administrador": "admin", "Gerente": "gerente", "Empleado": "empleado"}
+        role = role_map.get(self.role_combo.currentText(), "admin")
 
         validations = [
             validate_name(name, "Nombre"),
@@ -350,7 +364,7 @@ class FirstRunDialog(QDialog):
             return
 
         try:
-            user = User(name=name, email=email)
+            user = User(name=name, email=email, role=role)
             user.set_password(password)
             self.db.add(user)
             self.db.commit()
