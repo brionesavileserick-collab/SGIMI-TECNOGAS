@@ -121,9 +121,29 @@ class Movement(Base):
     receiver_signature = Column(Text, nullable=True)
 
     # ------------------------------------------------------------------
+    # Expansión 9 – Aprobaciones y programación
+    # ------------------------------------------------------------------
+    approval_level = Column(String(20), default="none", nullable=False, index=True)
+    admin_approved = Column(Boolean, default=False, nullable=False)
+    admin_approved_at = Column(DateTime(timezone=True), nullable=True)
+    admin_approved_by = Column(String(100), nullable=True)
+    manager_approved = Column(Boolean, default=False, nullable=False)
+    manager_approved_at = Column(DateTime(timezone=True), nullable=True)
+    manager_approved_by = Column(String(100), nullable=True)
+    requires_approval = Column(Boolean, default=False, nullable=False, index=True)
+    scheduled_date = Column(DateTime(timezone=True), nullable=True)
+    is_scheduled = Column(Boolean, default=False, nullable=False, index=True)
+    estimated_transit_days = Column(Integer, nullable=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    expected_arrival = Column(DateTime(timezone=True), nullable=True)
+    actual_transit_days = Column(Integer, nullable=True)
+    source_batch_id = Column(Integer, ForeignKey("inventory_batches.id", ondelete="SET NULL"), nullable=True)
+
+    # ------------------------------------------------------------------
     # Relationships
     # ------------------------------------------------------------------
     product = relationship("Product", back_populates="movements")
+    source_batch = relationship("InventoryBatch", foreign_keys=[source_batch_id])
     branch = relationship("Branch", foreign_keys=[branch_id])
     destination_branch = relationship("Branch", foreign_keys=[destination_branch_id])
     user = relationship("User", foreign_keys=[user_id])
@@ -183,4 +203,20 @@ class Movement(Base):
             # Exp 8 – Recepción física
             "receiver_name": self.receiver_name,
             "receiver_signature": self.receiver_signature,
+            # Expansión 9 – Aprobaciones y programación
+            "approval_level": self.approval_level,
+            "admin_approved": self.admin_approved,
+            "admin_approved_at": self.admin_approved_at.isoformat() if self.admin_approved_at else None,
+            "admin_approved_by": self.admin_approved_by,
+            "manager_approved": self.manager_approved,
+            "manager_approved_at": self.manager_approved_at.isoformat() if self.manager_approved_at else None,
+            "manager_approved_by": self.manager_approved_by,
+            "requires_approval": self.requires_approval,
+            "scheduled_date": self.scheduled_date.isoformat() if self.scheduled_date else None,
+            "is_scheduled": self.is_scheduled,
+            "estimated_transit_days": self.estimated_transit_days,
+            "sent_at": self.sent_at.isoformat() if self.sent_at else None,
+            "expected_arrival": self.expected_arrival.isoformat() if self.expected_arrival else None,
+            "actual_transit_days": self.actual_transit_days,
+            "source_batch_id": self.source_batch_id,
         }

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func as sql_func
 from models.movement import Movement, MovementState
 from models.movement_state_history import MovementStateHistory
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class MovementRepository:
@@ -78,8 +78,6 @@ class MovementRepository:
             query = query.filter(Movement.user_id == user_id)
         if movement_type:
             query = query.filter(Movement.movement_type == movement_type)
-        if state:
-            query = query.filter(Movement.state == state)
         if date_from:
             query = query.filter(Movement.created_at >= date_from)
         if date_to:
@@ -93,7 +91,12 @@ class MovementRepository:
         # Exp 5
         if reference_type:
             query = query.filter(Movement.reference_type == reference_type)
-        # Exp 1
+        # Exp 9 – filter by approval_level if provided via state alias
+        if state:
+            if state in ("pending_admin", "pending_manager", "approved", "rejected"):
+                query = query.filter(Movement.approval_level == state)
+            else:
+                query = query.filter(Movement.state == state)
         if not include_cancelled:
             query = query.filter(Movement.is_cancelled == False)
 
@@ -130,7 +133,10 @@ class MovementRepository:
         if movement_type:
             query = query.filter(Movement.movement_type == movement_type)
         if state:
-            query = query.filter(Movement.state == state)
+            if state in ("pending_admin", "pending_manager", "approved", "rejected"):
+                query = query.filter(Movement.approval_level == state)
+            else:
+                query = query.filter(Movement.state == state)
         if date_from:
             query = query.filter(Movement.created_at >= date_from)
         if date_to:
@@ -208,6 +214,180 @@ class MovementRepository:
                 )
             )
         return query.count()
+
+    def get_pending_admin_approval(self, branch_id: int = None) -> List[Movement]:
+        """Get movements pending admin approval."""
+        query = self.db.query(Movement).filter(
+            Movement.requires_approval == True,
+            Movement.approval_level == "pending_admin",
+            Movement.is_cancelled == False,
+        )
+        if branch_id:
+            query = query.filter(
+                or_(
+                    Movement.branch_id == branch_id,
+                    Movement.destination_branch_id == branch_id,
+                )
+            )
+        return query.order_by(Movement.created_at.desc()).all()
+
+    def get_pending_manager_approval(self, branch_id: int) -> List[Movement]:
+        """Get movements pending manager approval for a branch."""
+        query = self.db.query(Movement).filter(
+            Movement.requires_approval == True,
+            Movement.approval_level == "pending_manager",
+            Movement.destination_branch_id == branch_id,
+            Movement.is_cancelled == False,
+        )
+        return query.order_by(Movement.created_at.desc()).all()
+
+    def approve_by_admin(self, movement_id: int, admin_name: str) -> Optional[Movement]:
+        """Approve a movement at admin level."""
+        movement = self.get_by_id(movement_id)
+        if not movement:
+            return None
+        movement.admin_approved = True
+        movement.admin_approved_at = datetime.utcnow()
+        movement.admin_approved_by = admin_name
+        movement.approval_level = "pending_manager" if movement.requires_approval else "approved"
+        self.db.commit()
+        self.db.refresh(movement)
+        return movement
+
+    def approve_by_manager(self, movement_id: int, manager_name: str) -> Optional[Movement]:
+        """Approve a movement at manager level."""
+        movement = self.get_by_id(movement_id)
+        if not movement:
+            return None
+        movement.manager_approved = True
+        movement.manager_approved_at = datetime.utcnow()
+        movement.manager_approved_by = manager_name
+        movement.approval_level = "approved"
+        self.db.commit()
+        self.db.refresh(movement)
+        return movement
+
+    def reject_by_admin(self, movement_id: int, admin_name: str, reason: str) -> Optional[Movement]:
+        """Reject a movement at admin level."""
+        movement = self.get_by_id(movement_id)
+        if not movement:
+            return None
+        movement.admin_approved = False
+        movement.admin_approved_at = datetime.utcnow()
+        movement.admin_approved_by = admin_name
+        movement.state = MovementState.RECHAZADO.value
+        movement.approval_level = "rejected"
+        movement.reason = reason
+        if reason:
+            movement.notes = f"{movement.notes or ''}\nRechazado por admin: {reason}".strip()
+        self.db.commit()
+        self.db.refresh(movement)
+        return movement
+
+    def reject_by_manager(self, movement_id: int, manager_name: str, reason: str) -> Optional[Movement]:
+        """Reject a movement at manager level."""
+        movement = self.get_by_id(movement_id)
+        if not movement:
+            return None
+        movement.manager_approved = False
+        movement.manager_approved_at = datetime.utcnow()
+        movement.manager_approved_by = manager_name
+        movement.state = MovementState.RECHAZADO.value
+        movement.approval_level = "rejected"
+        movement.reason = reason
+        if reason:
+            movement.notes = f"{movement.notes or ''}\nRechazado por gerente: {reason}".strip()
+        self.db.commit()
+        self.db.refresh(movement)
+        return movement
+
+    def get_movements_pending_my_approval(self, approver_type: str, branch_id: int = None) -> List[Movement]:
+        """Get pending approvals for admin or manager."""
+        if approver_type == "admin":
+            return self.get_pending_admin_approval(branch_id)
+        if approver_type == "manager" and branch_id is not None:
+            return self.get_pending_manager_approval(branch_id)
+        return []
+
+    def get_scheduled_movements(self, branch_id: int = None) -> List[Movement]:
+        """Get scheduled movements."""
+        query = self.db.query(Movement).filter(
+            Movement.is_scheduled == True,
+            Movement.is_cancelled == False,
+        )
+        if branch_id:
+            query = query.filter(
+                or_(
+                    Movement.branch_id == branch_id,
+                    Movement.destination_branch_id == branch_id,
+                )
+            )
+        return query.order_by(Movement.scheduled_date.asc()).all()
+
+    def get_movements_due_today(self) -> List[Movement]:
+        """Get scheduled movements due today."""
+        today = datetime.utcnow().date()
+        return (
+            self.db.query(Movement)
+            .filter(
+                Movement.is_scheduled == True,
+                Movement.scheduled_date >= datetime(today.year, today.month, today.day),
+                Movement.scheduled_date < datetime(today.year, today.month, today.day, 23, 59, 59),
+                Movement.is_cancelled == False,
+            )
+            .order_by(Movement.scheduled_date.asc())
+            .all()
+        )
+
+    def execute_scheduled_movement(self, movement_id: int) -> Optional[Movement]:
+        """Execute a scheduled movement by marking it pending or approved as required."""
+        movement = self.get_by_id(movement_id)
+        if not movement:
+            return None
+        movement.is_scheduled = False
+        movement.scheduled_date = None
+        if movement.requires_approval:
+            if movement.approval_level == "approved":
+                movement.state = MovementState.VALIDADO.value
+                movement.sent_at = movement.sent_at or datetime.utcnow()
+                if movement.estimated_transit_days is not None:
+                    movement.expected_arrival = movement.sent_at + timedelta(days=movement.estimated_transit_days)
+            else:
+                movement.state = MovementState.PENDIENTE.value
+        else:
+            movement.state = MovementState.PENDIENTE.value
+        self.db.commit()
+        self.db.refresh(movement)
+        return movement
+
+    def get_delayed_transfers(self) -> List[Movement]:
+        """Get transfers with expected arrival passed."""
+        now = datetime.utcnow()
+        return (
+            self.db.query(Movement)
+            .filter(
+                Movement.movement_type == "transferencia",
+                Movement.expected_arrival.isnot(None),
+                Movement.expected_arrival < now,
+                Movement.state == MovementState.VALIDADO.value,
+                Movement.is_cancelled == False,
+            )
+            .all()
+        )
+
+    def get_average_transit_time(self, origin_branch_id: int, dest_branch_id: int) -> Optional[float]:
+        """Calculate average actual transit days for transfers between two branches."""
+        query = self.db.query(
+            sql_func.avg(Movement.actual_transit_days)
+        ).filter(
+            Movement.movement_type == "transferencia",
+            Movement.branch_id == origin_branch_id,
+            Movement.destination_branch_id == dest_branch_id,
+            Movement.actual_transit_days.isnot(None),
+            Movement.is_cancelled == False,
+        )
+        result = query.first()
+        return float(result[0]) if result and result[0] is not None else None
 
     def get_movement_with_details(self, movement_id: int) -> Optional[dict]:
         """Get movement with related entity details."""
