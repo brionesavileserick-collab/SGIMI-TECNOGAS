@@ -3,7 +3,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from core.database import Base
+from models.branch import Branch
 from models.user import User
+from modules.communication.models import CommunicationRecipient
 from modules.communication.service import CommunicationService
 
 
@@ -54,3 +56,46 @@ def test_send_message_and_mark_as_read(db_session):
     marked = service.mark_as_read(message["id"], recipient.id)
     assert marked["status"] == "leido"
     assert service.get_unread_count(recipient.id) == 0
+
+
+def test_send_message_accepts_recipient_names(db_session):
+    sender = create_user(db_session, "Alice", "alice2@test.com")
+    recipient = create_user(db_session, "Carlos", "carlos@test.com")
+
+    service = CommunicationService(db_session)
+    service.send_message(
+        sender_id=sender.id,
+        subject="Hola",
+        body="Mensaje a nombre",
+        recipients=[recipient.name],
+        priority="alta",
+        communication_type="mensaje",
+        related_ids={},
+    )
+
+    recipient_rows = db_session.query(CommunicationRecipient).all()
+    assert len(recipient_rows) == 1
+    assert recipient_rows[0].recipient_id == recipient.id
+
+
+def test_send_message_accepts_branch_names(db_session):
+    sender = create_user(db_session, "Alice", "alice3@test.com")
+    manager = create_user(db_session, "Carlos", "carlos2@test.com")
+    branch = Branch(name="Sucursal Centro", is_active=True, manager_user_id=manager.id)
+    db_session.add(branch)
+    db_session.commit()
+
+    service = CommunicationService(db_session)
+    service.send_message(
+        sender_id=sender.id,
+        subject="Hola sucursal",
+        body="Mensaje a sucursal",
+        recipients=[branch.name],
+        priority="alta",
+        communication_type="mensaje",
+        related_ids={},
+    )
+
+    recipient_rows = db_session.query(CommunicationRecipient).all()
+    assert len(recipient_rows) == 1
+    assert recipient_rows[0].recipient_id == manager.id

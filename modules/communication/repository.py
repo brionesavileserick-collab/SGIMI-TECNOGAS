@@ -117,13 +117,25 @@ class CommunicationRepository:
 
     def search_communications(self, query: str, user_id: int, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         search_term = f"%{query}%"
+        recipient_ids = self.db.query(CommunicationRecipient.communication_id).filter(
+            CommunicationRecipient.recipient_id == user_id
+        ).subquery()
         rows = self.db.query(Communication).filter(
+            or_(
+                Communication.sender_id == user_id,
+                Communication.id.in_(recipient_ids),
+            )
+        ).filter(
             or_(
                 Communication.subject.like(search_term),
                 Communication.body.like(search_term),
             )
-        ).filter(Communication.sender_id == user_id).all()
-        return [item.to_dict() for item in rows]
+        )
+        if filters:
+            communication_type = filters.get("communication_type")
+            if communication_type:
+                rows = rows.filter(Communication.communication_type == communication_type)
+        return [item.to_dict() for item in rows.order_by(Communication.created_at.desc()).all()]
 
     def get_announcements_for_branch(self, branch_id: Optional[int], include_archived: bool = False) -> List[Dict[str, Any]]:
         query = self.db.query(Communication).filter(Communication.communication_type == "anuncio")
