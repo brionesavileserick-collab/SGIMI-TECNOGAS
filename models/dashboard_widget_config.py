@@ -31,6 +31,10 @@ WIDGET_KEYS = (
     "ranking",
     "charts",
     "recent_movements",
+    "scheduled_counts",
+    "pending_approvals",
+    "capacity",
+    "trend_alerts",
 )
 
 DEFAULT_POSITIONS = {key: idx for idx, key in enumerate(WIDGET_KEYS)}

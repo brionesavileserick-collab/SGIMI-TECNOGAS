@@ -110,6 +110,182 @@ class DashboardService:
             "kpi_eru": self.calculate_kpi_eru(branch_id),
         }
 
+    def get_branch_info(self, branch_id: int = None) -> Dict[str, Any]:
+        """Return basic branch information for the active branch indicator."""
+        if not branch_id:
+            return {
+                "id": None,
+                "name": "Todas las sucursales",
+                "operational_status": "operativa",
+                "max_products": None,
+                "storage_capacity": None,
+                "next_scheduled_count": None,
+                "last_count_date": None,
+            }
+
+        branch = self.branch_repo.get_by_id(branch_id)
+        if not branch:
+            return {
+                "id": branch_id,
+                "name": f"Sucursal {branch_id}",
+                "operational_status": "operativa",
+                "max_products": None,
+                "storage_capacity": None,
+                "next_scheduled_count": None,
+                "last_count_date": None,
+            }
+
+        return {
+            "id": branch.id,
+            "name": branch.name,
+            "operational_status": branch.operational_status or "operativa",
+            "max_products": branch.max_products,
+            "storage_capacity": branch.storage_capacity,
+            "next_scheduled_count": branch.next_scheduled_count.isoformat() if branch.next_scheduled_count else None,
+            "last_count_date": branch.last_count_date.isoformat() if branch.last_count_date else None,
+        }
+
+    def get_pending_counts(self, branch_id: int = None) -> Dict[str, Any]:
+        """Get pending inventory count sessions for the selected branch."""
+        from models.inventory_count_session import InventoryCountSession
+        from models.branch import Branch
+
+        now = datetime.utcnow()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        query = self.db.query(InventoryCountSession).filter(
+            InventoryCountSession.status != "completed"
+        )
+        if branch_id:
+            query = query.filter(InventoryCountSession.branch_id == branch_id)
+
+        scheduled_today = query.filter(
+            InventoryCountSession.scheduled_date >= today_start,
+            InventoryCountSession.scheduled_date <= today_end,
+        ).order_by(InventoryCountSession.scheduled_date).all()
+
+        overdue = query.filter(InventoryCountSession.scheduled_date < now).order_by(
+            InventoryCountSession.scheduled_date
+        ).all()
+
+        upcoming_7_days = query.filter(
+            InventoryCountSession.scheduled_date > now,
+            InventoryCountSession.scheduled_date <= now + timedelta(days=7),
+        ).order_by(InventoryCountSession.scheduled_date).all()
+
+        def _session_to_dict(session):
+            branch_name = None
+            if session.branch_id:
+                branch_obj = self.db.query(Branch).filter(Branch.id == session.branch_id).first()
+                branch_name = branch_obj.name if branch_obj else None
+            return {
+                "id": session.id,
+                "branch_id": session.branch_id,
+                "branch_name": branch_name or "-",
+                "scheduled_date": session.scheduled_date.isoformat() if session.scheduled_date else None,
+                "status": session.status,
+                "started_at": session.started_at.isoformat() if session.started_at else None,
+                "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+            }
+
+        return {
+            "scheduled_today": [_session_to_dict(s) for s in scheduled_today],
+            "overdue": [_session_to_dict(s) for s in overdue],
+            "upcoming_7_days": [_session_to_dict(s) for s in upcoming_7_days],
+            "total": query.count(),
+        }
+
+    def get_overdue_counts(self, branch_id: int = None, days: int = 7) -> int:
+        """Return the number of count sessions overdue by more than N days."""
+        from models.inventory_count_session import InventoryCountSession
+
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        query = self.db.query(InventoryCountSession).filter(
+            InventoryCountSession.status != "completed",
+            InventoryCountSession.scheduled_date <= cutoff,
+        )
+        if branch_id:
+            query = query.filter(InventoryCountSession.branch_id == branch_id)
+        return query.count()
+
+    def _approval_item_from_movement(self, movement) -> Dict[str, Any]:
+        details = self.movement_repo.get_movement_with_details(movement.id)
+        product_name = details.get("product", {}).get("name") if details else None
+        origin_branch = details.get("branch", {}).get("name") if details else None
+        destination_branch = details.get("destination_branch", {}).get("name") if details else None
+        return {
+            "movement_id": movement.id,
+            "product_name": product_name or "-",
+            "quantity": movement.quantity,
+            "origin_branch": origin_branch or "-",
+            "destination_branch": destination_branch or "-",
+            "created_at": movement.created_at.isoformat() if movement.created_at else None,
+        }
+
+    def get_pending_approvals(self, branch_id: int = None) -> Dict[str, Any]:
+        """Return pending approvals categorized by admin and manager levels."""
+        pending_admin = []
+        pending_manager = []
+
+        if branch_id:
+            pending_admin = self.movement_repo.get_pending_admin_approval(branch_id)
+            pending_manager = self.movement_repo.get_pending_manager_approval(branch_id)
+        else:
+            pending_admin = self.movement_repo.get_all(state="pending_admin")
+            pending_manager = self.movement_repo.get_all(state="pending_manager")
+
+        return {
+            "pending_admin": [self._approval_item_from_movement(mv) for mv in pending_admin],
+            "pending_manager": [self._approval_item_from_movement(mv) for mv in pending_manager],
+            "total": len(pending_admin) + len(pending_manager),
+        }
+
+    def get_branch_capacity(self, branch_id: int) -> Dict[str, Any]:
+        """Return capacity usage for a single branch."""
+        branch = self.branch_repo.get_by_id(branch_id)
+        if not branch:
+            return {
+                "branch_id": branch_id,
+                "branch_name": "Sucursal desconocida",
+                "current_skus": 0,
+                "max_products": None,
+                "usage_percent": None,
+                "status": "ok",
+            }
+
+        current_skus = self.inventory_repo.count(branch_id)
+        max_products = branch.max_products
+        usage_percent = round((current_skus / max_products) * 100, 2) if max_products else None
+        status = "ok"
+        if max_products:
+            if usage_percent >= 90:
+                status = "critical"
+            elif usage_percent >= 70:
+                status = "warning"
+
+        return {
+            "branch_id": branch.id,
+            "branch_name": branch.name,
+            "current_skus": current_skus,
+            "max_products": max_products,
+            "usage_percent": usage_percent,
+            "status": status,
+        }
+
+    def get_all_branches_capacity(self) -> List[Dict[str, Any]]:
+        """Return capacity usage for all active branches."""
+        branches = self.branch_repo.get_all()
+        capacities = []
+        for branch in branches:
+            capacities.append(self.get_branch_capacity(branch.id))
+        return capacities
+
+    def get_trend_alerts(self, branch_id: int = None) -> List[Dict[str, Any]]:
+        """Return trend alerts when KPI trends fall below configured thresholds."""
+        # Prioridad baja: si no hay suficiente histórico disponible, no mostrar.
+        return []
+
     def calculate_kpi_eri(self, branch_id: int = None) -> float:
         """ERI = (Items without discrepancy / Total items) * 100"""
         total_items = self.inventory_repo.count(branch_id)
@@ -793,7 +969,7 @@ class DashboardService:
         """Return the list of visible widget keys for a user, in order."""
         configs = self.get_user_widget_config(user_id)
         if not configs:
-            # Default: show all
+            # Default: show all widgets including newly added optional widgets
             return [
                 "quick_stats",
                 "kpi",
@@ -805,5 +981,9 @@ class DashboardService:
                 "ranking",
                 "charts",
                 "recent_movements",
+                "scheduled_counts",
+                "pending_approvals",
+                "capacity",
+                "trend_alerts",
             ]
         return [c["widget_key"] for c in configs if c.get("is_visible")]

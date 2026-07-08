@@ -246,6 +246,10 @@ _WIDGET_LABELS: Dict[str, str] = {
     "ranking":          "Ranking de Sucursales",
     "charts":           "Tendencias (Gráficos)",
     "recent_movements": "Movimientos Recientes",
+    "scheduled_counts": "Conteos Programados",
+    "pending_approvals": "Aprobaciones Pendientes",
+    "capacity":         "Capacidad de Sucursal",
+    "trend_alerts":     "Alertas de Tendencia",
 }
 
 
@@ -375,6 +379,10 @@ class DashboardWidget(QWidget):
         self._sections["ranking"]          = self._build_ranking()
         self._sections["charts"]           = self._build_charts()
         self._sections["recent_movements"] = self._build_recent_movements()
+        self._sections["scheduled_counts"] = self._build_scheduled_counts()
+        self._sections["pending_approvals"] = self._build_pending_approvals()
+        self._sections["capacity"]         = self._build_capacity()
+        self._sections["trend_alerts"]     = self._build_trend_alerts()
 
         for key, widget in self._sections.items():
             self._content_layout.addWidget(widget)
@@ -409,12 +417,24 @@ class DashboardWidget(QWidget):
         self._branch_combo.setMinimumWidth(160)
         self._branch_combo.addItem("Todas las sucursales", None)
         try:
-            for br in self.branch_service.get_all():
+            for br in self.branch_service.get_all_active_branches():
                 self._branch_combo.addItem(br["name"], br["id"])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error cargando sucursales en el dashboard: {e}")
         self._branch_combo.currentIndexChanged.connect(self._on_branch_changed)
         h.addWidget(self._branch_combo)
+
+        self._branch_status_label = QLabel("Sucursal de Trabajo: Todas las sucursales")
+        self._branch_status_label.setStyleSheet(
+            "font-size:13px;font-weight:bold;color:#37474F;padding:4px;"
+        )
+        h.addWidget(self._branch_status_label)
+
+        self._last_updated_label = QLabel("Última actualización: --:--")
+        self._last_updated_label.setStyleSheet(
+            "font-size:12px;color:#546E7A;padding:4px;"
+        )
+        h.addWidget(self._last_updated_label)
 
         # --- Exp 2: period selector ---
         h.addWidget(QLabel("Período:"))
@@ -847,6 +867,71 @@ class DashboardWidget(QWidget):
         layout.addLayout(cols)
         return group
 
+    def _build_scheduled_counts(self) -> QGroupBox:
+        group = QGroupBox("Conteos Programados")
+        layout = QVBoxLayout(group)
+
+        self._counts_summary_label = QLabel("Cargando...")
+        self._counts_summary_label.setWordWrap(True)
+        self._counts_summary_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._counts_summary_label)
+
+        self._counts_details_label = QLabel()
+        self._counts_details_label.setWordWrap(True)
+        self._counts_details_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._counts_details_label)
+
+        btn_layout = QHBoxLayout()
+        self._start_count_btn = QPushButton("Iniciar Conteo")
+        self._start_count_btn.clicked.connect(lambda: self._navigate("inventory", action="start_count"))
+        btn_layout.addStretch()
+        btn_layout.addWidget(self._start_count_btn)
+        layout.addLayout(btn_layout)
+        return group
+
+    def _build_pending_approvals(self) -> QGroupBox:
+        group = QGroupBox("Aprobaciones Pendientes")
+        layout = QVBoxLayout(group)
+
+        self._approvals_summary_label = QLabel("Cargando...")
+        self._approvals_summary_label.setWordWrap(True)
+        self._approvals_summary_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._approvals_summary_label)
+
+        self._approvals_list_label = QLabel()
+        self._approvals_list_label.setWordWrap(True)
+        self._approvals_list_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._approvals_list_label)
+
+        return group
+
+    def _build_capacity(self) -> QGroupBox:
+        group = QGroupBox("Capacidad de Sucursal")
+        layout = QVBoxLayout(group)
+
+        self._capacity_summary_label = QLabel("Cargando...")
+        self._capacity_summary_label.setWordWrap(True)
+        self._capacity_summary_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._capacity_summary_label)
+
+        self._capacity_bar_label = QLabel()
+        self._capacity_bar_label.setWordWrap(True)
+        self._capacity_bar_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._capacity_bar_label)
+
+        return group
+
+    def _build_trend_alerts(self) -> QGroupBox:
+        group = QGroupBox("Alertas de Tendencia")
+        layout = QVBoxLayout(group)
+
+        self._trend_alerts_label = QLabel("Cargando...")
+        self._trend_alerts_label.setWordWrap(True)
+        self._trend_alerts_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._trend_alerts_label)
+
+        return group
+
     def _refresh_transfers(self) -> None:
         try:
             data    = self.service.get_pending_transfers(self._branch_id)
@@ -885,6 +970,161 @@ class DashboardWidget(QWidget):
 
         except Exception as e:
             logger.error(f"Error refreshing transfers: {e}")
+
+    def _refresh_scheduled_counts(self) -> None:
+        try:
+            data = self.service.get_pending_counts(self._branch_id)
+            overdue = data.get("overdue", [])
+            today = data.get("scheduled_today", [])
+            upcoming = data.get("upcoming_7_days", [])
+            total = data.get("total", 0)
+
+            self._counts_summary_label.setText(
+                f"<b>{total}</b> conteos pendientes: "
+                f"<span style='color:{COLOR_GREEN};'>Hoy {len(today)}</span>, "
+                f"<span style='color:{COLOR_RED};'>Vencidos {len(overdue)}</span>, "
+                f"<span style='color:{COLOR_AMBER};'>Próximos 7 días {len(upcoming)}</span>"
+            )
+            self._counts_summary_label.setTextFormat(Qt.TextFormat.RichText)
+
+            if not any((today, overdue, upcoming)):
+                self._counts_details_label.setText("<i>No hay conteos programados.</i>")
+                return
+
+            lines = []
+            if overdue:
+                lines.append("<b style='color:#D32F2F;'>Conteos vencidos:</b>")
+                for s in overdue[:5]:
+                    lines.append(
+                        f"• {s['branch_name']} — {s['scheduled_date']} "
+                        f"({s['status']})"
+                    )
+            if today:
+                lines.append("<b style='color:#388E3C;'>Programados hoy:</b>")
+                for s in today[:5]:
+                    lines.append(
+                        f"• {s['branch_name']} — {s['scheduled_date']} "
+                        f"({s['status']})"
+                    )
+            if upcoming:
+                lines.append("<b style='color:#F57C00;'>Próximos 7 días:</b>")
+                for s in upcoming[:5]:
+                    lines.append(
+                        f"• {s['branch_name']} — {s['scheduled_date']} "
+                        f"({s['status']})"
+                    )
+            self._counts_details_label.setText("<br>".join(lines))
+        except Exception as e:
+            logger.error(f"Error refreshing scheduled counts: {e}")
+
+    def _refresh_pending_approvals(self) -> None:
+        try:
+            data = self.service.get_pending_approvals(self._branch_id)
+            admin_items = data.get("pending_admin", [])
+            manager_items = data.get("pending_manager", [])
+            total = data.get("total", 0)
+
+            self._approvals_summary_label.setText(
+                f"<b>{total}</b> aprobaciones pendientes: "
+                f"Admin {len(admin_items)}, Gerente {len(manager_items)}"
+            )
+            self._approvals_summary_label.setTextFormat(Qt.TextFormat.RichText)
+
+            if not total:
+                self._approvals_list_label.setText("<i>No hay movimientos pendientes de aprobación.</i>")
+                return
+
+            lines = []
+            if admin_items:
+                lines.append("<b style='color:#F57C00;'>Pendientes de Admin:</b>")
+                for it in admin_items[:5]:
+                    lines.append(
+                        f"• #{it['movement_id']} {it['product_name']} — {it['quantity']} u. "
+                        f"{it['origin_branch']}→{it['destination_branch']} "
+                        f"({it['created_at'] or 'sin fecha'})"
+                    )
+            if manager_items:
+                lines.append("<b style='color:#D32F2F;'>Pendientes de Gerente:</b>")
+                for it in manager_items[:5]:
+                    lines.append(
+                        f"• #{it['movement_id']} {it['product_name']} — {it['quantity']} u. "
+                        f"{it['origin_branch']}→{it['destination_branch']} "
+                        f"({it['created_at'] or 'sin fecha'})"
+                    )
+            self._approvals_list_label.setText("<br>".join(lines))
+        except Exception as e:
+            logger.error(f"Error refreshing pending approvals: {e}")
+
+    def _refresh_capacity(self) -> None:
+        try:
+            if self._branch_id:
+                data = self.service.get_branch_capacity(self._branch_id)
+                usage = data.get("usage_percent")
+                status = data.get("status", "ok")
+                max_products = data.get("max_products")
+                current = data.get("current_skus", 0)
+                label = data.get("branch_name", "Sucursal")
+
+                status_color = COLOR_GREEN if status == "ok" else (COLOR_AMBER if status == "warning" else COLOR_RED)
+                self._capacity_summary_label.setText(
+                    f"<b>{label}</b> — {current} SKUs" +
+                    (f" / {max_products}" if max_products else "") +
+                    (f" — <span style='color:{status_color};'>{status.upper()}</span>" if max_products else "")
+                )
+                self._capacity_summary_label.setTextFormat(Qt.TextFormat.RichText)
+
+                if usage is None:
+                    self._capacity_bar_label.setText("<i>Sin límite configurado.</i>")
+                else:
+                    filled = int(usage / 5) if usage is not None else 0
+                    bar = "█" * min(filled, 20) + "░" * max(0, 20 - min(filled, 20))
+                    self._capacity_bar_label.setText(
+                        f"{bar} {usage:.1f}% de {max_products} SKUs"
+                    )
+            else:
+                branches = self.service.get_all_branches_capacity()
+                if not branches:
+                    self._capacity_summary_label.setText("<i>No hay datos de capacidad disponibles.</i>")
+                    self._capacity_bar_label.setText("")
+                    return
+
+                lines = ["<b>Capacidad por sucursal:</b>"]
+                for b in branches[:8]:
+                    usage = b.get("usage_percent")
+                    max_products = b.get("max_products")
+                    status = b.get("status", "ok")
+                    color = "#388E3C" if status == "ok" else ("#F57C00" if status == "warning" else "#D32F2F")
+                    usage_text = f"{usage:.1f}%" if usage is not None else "Sin límite"
+                    lines.append(
+                        f"• <span style='color:{color};'>{b['branch_name']}</span>: {usage_text} "
+                        f"({b['current_skus']}{f'/{max_products}' if max_products else ''})"
+                    )
+                self._capacity_summary_label.setText("<br>".join(lines))
+                self._capacity_bar_label.setText("")
+        except Exception as e:
+            logger.error(f"Error refreshing capacity: {e}")
+
+    def _refresh_trend_alerts(self) -> None:
+        try:
+            alerts = self.service.get_trend_alerts(self._branch_id)
+            if not alerts:
+                self._trend_alerts_label.setText("<i>No hay alertas de tendencia activas.</i>")
+                return
+
+            lines = []
+            for alert in alerts[:8]:
+                color = "#2196F3"
+                if alert.get("level") == "warning":
+                    color = COLOR_AMBER
+                elif alert.get("level") == "critical":
+                    color = COLOR_RED
+                lines.append(
+                    f"• <span style='color:{color};'>{alert['metric']}</span>: "
+                    f"{alert['message']} (<b>{alert['change_pct']}%</b>)"
+                )
+            self._trend_alerts_label.setText("<br>".join(lines))
+        except Exception as e:
+            logger.error(f"Error refreshing trend alerts: {e}")
 
     # ----------------------------------------------------------------
     # Exp 7 – Efficiency widget
@@ -1209,6 +1449,8 @@ class DashboardWidget(QWidget):
 
     def _on_branch_changed(self, _index: int) -> None:
         self._branch_id = self._branch_combo.currentData()
+        if self.handlers:
+            self.handlers.set_active_branch_id(self._branch_id)
         self.load_data()
 
     def _on_period_changed(self, _index: int) -> None:
@@ -1243,6 +1485,11 @@ class DashboardWidget(QWidget):
             self._refresh_urgent_banner()
 
             metrics = self.service.get_dashboard_metrics(self._branch_id)
+            branch_info = self.service.get_branch_info(self._branch_id)
+            self._branch_status_label.setText(
+                f"Sucursal de Trabajo: {branch_info['name']} "
+                f"(<span style='color:#37474F;font-weight:bold;'>{branch_info['operational_status'].capitalize()}</span>)"
+            )
 
             # Attempt to get trend comparison; gracefully degrade on error
             try:
@@ -1274,6 +1521,18 @@ class DashboardWidget(QWidget):
             if self._sections["transfers"].isVisible():
                 self._refresh_transfers()
 
+            if self._sections["scheduled_counts"].isVisible():
+                self._refresh_scheduled_counts()
+
+            if self._sections["pending_approvals"].isVisible():
+                self._refresh_pending_approvals()
+
+            if self._sections["capacity"].isVisible():
+                self._refresh_capacity()
+
+            if self._sections["trend_alerts"].isVisible():
+                self._refresh_trend_alerts()
+
             if self._sections["efficiency"].isVisible():
                 self._refresh_efficiency()
 
@@ -1286,6 +1545,9 @@ class DashboardWidget(QWidget):
             if self._sections["recent_movements"].isVisible():
                 self._refresh_recent_movements()
 
+            self._last_updated_label.setText(
+                f"Última actualización: {datetime.utcnow().strftime('%H:%M:%S')}"
+            )
         except Exception as e:
             logger.error(f"Error in load_data: {e}", exc_info=True)
 

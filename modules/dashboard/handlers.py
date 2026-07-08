@@ -8,7 +8,7 @@ Subscriptions:
   Exp 8    : STOCK_REORDER_NEEDED, STOCK_CRITICAL
 """
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 from sqlalchemy.orm import Session
 from core.event_bus import event_bus
 from core.settings import settings
@@ -22,6 +22,7 @@ class DashboardHandlers:
 
     def __init__(self, db: Session):
         self.db = db
+        self._active_branch_id: Optional[int] = None
         self._refresh_callback: Callable = None
         # Optional separate callback for urgent-alert badge refresh
         self._alert_badge_callback: Callable = None
@@ -29,6 +30,29 @@ class DashboardHandlers:
         self._transfer_callback: Callable = None
         self._register_handlers()
         logger.info("Dashboard handlers registered")
+
+    def set_active_branch_id(self, branch_id: int = None) -> None:
+        """Set the currently selected branch for selective refresh."""
+        self._active_branch_id = branch_id
+
+    def _should_refresh(self, data: Dict[str, Any] = None) -> bool:
+        """Return True if the incoming event should refresh the active branch dashboard."""
+        if self._active_branch_id is None:
+            return True
+        if not data:
+            return True
+
+        branch_keys = [
+            "branch_id",
+            "destination_branch_id",
+            "origin_branch_id",
+            "source_branch_id",
+            "target_branch_id",
+        ]
+        event_branches = [data.get(key) for key in branch_keys if data.get(key) is not None]
+        if not event_branches:
+            return True
+        return self._active_branch_id in event_branches
 
     # ------------------------------------------------------------------
     # Callback registration
@@ -101,16 +125,22 @@ class DashboardHandlers:
     def handle_movement_change(self, data: Dict[str, Any]) -> None:
         """Handle any movement lifecycle event (created / validated / cancelled / reversed)."""
         logger.info(f"Dashboard: movement event → {data}")
+        if not self._should_refresh(data):
+            return
         self._trigger_refresh()
 
     def handle_inventory_change(self, data: Dict[str, Any]) -> None:
         """Handle inventory update events."""
         logger.info(f"Dashboard: inventory event → {data}")
+        if not self._should_refresh(data):
+            return
         self._trigger_refresh()
 
     def handle_alert(self, data: Dict[str, Any]) -> None:
         """Handle generic alert events – refresh badges first, then full UI."""
         logger.info(f"Dashboard: alert event → {data}")
+        if not self._should_refresh(data):
+            return
         self._trigger_alert_badge()
         self._trigger_refresh()
 
@@ -120,12 +150,16 @@ class DashboardHandlers:
         Refreshes the transfers widget immediately; full refresh follows.
         """
         logger.info(f"Dashboard: transfer event → {data}")
+        if not self._should_refresh(data):
+            return
         self._trigger_transfer_refresh()
         self._trigger_refresh()
 
     def handle_urgent_stock(self, data: Dict[str, Any]) -> None:
         """Handle urgent stock events – update alert badge immediately."""
         logger.info(f"Dashboard: urgent stock event → {data}")
+        if not self._should_refresh(data):
+            return
         self._trigger_alert_badge()
         self._trigger_refresh()
 
