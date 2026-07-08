@@ -656,3 +656,579 @@ class PriceHistoryService:
         """Delegates to ProductService.get_price_variation for convenience."""
         from sqlalchemy.orm import Session as _Session  # local import avoids cycle
         return ProductService(self._product_repo.db).get_price_variation(product_id, days)
+
+
+# ======================================================================
+# Import new repositories needed for the expansions below
+# ======================================================================
+from modules.products.repository import (
+    KitComponentRepository,
+    ProductChangeHistoryRepository,
+)
+
+# Fields tracked by the change history log (update_product intercepts these)
+_TRACKED_FIELDS = {
+    "name", "sku", "description", "unit_of_measure", "unit_price",
+    "category_id", "brand", "default_supplier_id", "details",
+    "internal_notes", "global_min_stock",
+    "product_status", "discontinued_at", "replacement_product_id",
+    "parent_product_id", "variant_group_id", "variant_attributes",
+    "is_kit", "sat_product_code", "customs_tariff_code", "country_of_origin",
+}
+
+# Valid product_status values
+_VALID_PRODUCT_STATUSES = {"active", "discontinued", "temporarily_unavailable", "on_hold"}
+
+
+# ======================================================================
+# Patch ProductService.update_product to emit change history
+# ======================================================================
+
+_original_update_product = ProductService.update_product
+
+
+def _patched_update_product(
+    self,
+    product_id: int,
+    update_data: dict,
+    change_reason: str = None,
+    changed_by_user_id: int = None,
+    changed_by_name: str = None,
+) -> Optional[Dict[str, Any]]:
+    """Extended update_product that logs field-level changes.
+
+    All existing behaviour is preserved.  The new *changed_by_name*
+    parameter is forwarded to the ProductChangeHistory log.
+    changed_by_user_id is kept for backward-compat with PriceHistory.
+    """
+    # Capture snapshot before update
+    existing = self.repository.get_by_id(product_id)
+    if not existing:
+        return None
+
+    before = existing.to_dict()
+
+    # Delegate to original implementation
+    result = _original_update_product(
+        self,
+        product_id,
+        update_data,
+        change_reason=change_reason,
+        changed_by_user_id=changed_by_user_id,
+    )
+    if result is None:
+        return None
+
+    # Build diff for tracked fields
+    changes = {}
+    for field in _TRACKED_FIELDS:
+        if field in update_data:
+            old_val = before.get(field)
+            new_val = update_data[field]
+            # Only log if value actually changed
+            if str(old_val) != str(new_val):
+                changes[field] = (old_val, new_val)
+
+    if changes:
+        history_repo = ProductChangeHistoryRepository(self.repository.db)
+        history_repo.log_many(product_id, changes, changed_by_name=changed_by_name)
+
+    return result
+
+
+ProductService.update_product = _patched_update_product
+
+
+# ======================================================================
+# ProductService – Variantes de Producto (injected methods)
+# ======================================================================
+
+def _svc_get_variants(self, product_id: int) -> List[Dict[str, Any]]:
+    """Return all active variants of a product."""
+    variants = self.repository.get_variants(product_id)
+    return [v.to_dict() for v in variants]
+
+
+def _svc_get_variant_summary(self, product_id: int) -> Dict[str, Any]:
+    """Return a dict with the parent product and all its variants."""
+    product = self.repository.get_by_id(product_id)
+    if not product:
+        return {}
+    # Resolve to the root parent if this product is itself a variant
+    root_id = product.parent_product_id or product_id
+    root = self.repository.get_by_id(root_id)
+    variants = self.repository.get_variants(root_id)
+    return {
+        "parent": root.to_dict() if root else None,
+        "variants": [v.to_dict() for v in variants],
+        "total_variants": len(variants),
+    }
+
+
+def _svc_create_variant(
+    self,
+    parent_product_id: int,
+    variant_data: dict,
+) -> Dict[str, Any]:
+    """Create a variant product copied from the parent's base fields.
+
+    Fields in *variant_data* override the parent values.
+    The new product automatically inherits parent_product_id and
+    variant_group_id (derived from parent if not supplied).
+    """
+    parent = self.repository.get_by_id(parent_product_id)
+    if not parent:
+        raise ValueError(f"Producto padre {parent_product_id} no encontrado")
+
+    # Build base from parent, then override with variant_data
+    base = {
+        "name": parent.name,
+        "description": parent.description,
+        "unit_of_measure": parent.unit_of_measure,
+        "unit_price": parent.unit_price,
+        "category_id": parent.category_id,
+        "brand": parent.brand,
+        "default_supplier_id": parent.default_supplier_id,
+        "details": parent.details,
+        "product_status": "active",
+    }
+    base.update(variant_data)
+
+    # Enforce parent link
+    base["parent_product_id"] = parent_product_id
+
+    # Auto-assign variant_group_id from parent SKU if not provided
+    if not base.get("variant_group_id"):
+        base["variant_group_id"] = (
+            parent.variant_group_id or f"VAR-{parent.sku}"
+        )
+
+    # If parent has no group yet, back-fill it
+    if not parent.variant_group_id:
+        self.repository.update(
+            parent_product_id,
+            {"variant_group_id": base["variant_group_id"]},
+        )
+
+    result = self.create_product(base)
+
+    event_bus.emit(settings.Events.PRODUCT_VARIANT_CREATED, {
+        "parent_product_id": parent_product_id,
+        "variant_product_id": result["id"],
+        "variant_group_id": base["variant_group_id"],
+        "variant_attributes": base.get("variant_attributes"),
+    })
+    logger.info(
+        f"Variant created: {result['sku']} (parent: {parent.sku})"
+    )
+    return result
+
+
+def _svc_get_products_by_variant_group(self, group_id: str) -> List[Dict[str, Any]]:
+    products = self.repository.get_products_by_variant_group(group_id)
+    return [p.to_dict() for p in products]
+
+
+def _svc_get_parent_products(self) -> List[Dict[str, Any]]:
+    products = self.repository.get_parent_products()
+    return [p.to_dict() for p in products]
+
+
+# Inject into ProductService
+ProductService.get_variants = _svc_get_variants
+ProductService.get_variant_summary = _svc_get_variant_summary
+ProductService.create_variant = _svc_create_variant
+ProductService.get_products_by_variant_group = _svc_get_products_by_variant_group
+ProductService.get_parent_products = _svc_get_parent_products
+
+
+# ======================================================================
+# ProductService – Status de Descontinuación (injected methods)
+# ======================================================================
+
+def _svc_discontinue_product(
+    self,
+    product_id: int,
+    replacement_id: int = None,
+    changed_by_name: str = None,
+) -> Optional[Dict[str, Any]]:
+    """Mark a product as discontinued and optionally assign a replacement."""
+    from datetime import datetime as _dt
+    product = self.repository.get_by_id(product_id)
+    if not product:
+        return None
+
+    update_data = {
+        "product_status": "discontinued",
+        "discontinued_at": _dt.utcnow(),
+    }
+    if replacement_id is not None:
+        # Validate the replacement exists
+        replacement = self.repository.get_by_id(replacement_id)
+        if not replacement:
+            raise ValueError(f"Producto de reemplazo {replacement_id} no encontrado")
+        update_data["replacement_product_id"] = replacement_id
+
+    result = self.update_product(
+        product_id,
+        update_data,
+        changed_by_name=changed_by_name,
+    )
+
+    event_bus.emit(settings.Events.PRODUCT_DISCONTINUED, {
+        "product_id": product_id,
+        "sku": product.sku,
+        "replacement_product_id": replacement_id,
+        "changed_by_name": changed_by_name,
+    })
+    logger.info(f"Product discontinued: {product.sku}")
+    return result
+
+
+def _svc_reactivate_product(
+    self,
+    product_id: int,
+    changed_by_name: str = None,
+) -> Optional[Dict[str, Any]]:
+    """Reactivate a discontinued / on-hold product."""
+    product = self.repository.get_by_id(product_id)
+    if not product:
+        return None
+
+    result = self.update_product(
+        product_id,
+        {
+            "product_status": "active",
+            "discontinued_at": None,
+        },
+        changed_by_name=changed_by_name,
+    )
+
+    event_bus.emit(settings.Events.PRODUCT_REACTIVATED, {
+        "product_id": product_id,
+        "sku": product.sku,
+        "changed_by_name": changed_by_name,
+    })
+    logger.info(f"Product reactivated: {product.sku}")
+    return result
+
+
+def _svc_get_products_by_status(self, status: str) -> List[Dict[str, Any]]:
+    if status not in _VALID_PRODUCT_STATUSES:
+        raise ValueError(
+            f"Estado inválido '{status}'. "
+            f"Valores permitidos: {sorted(_VALID_PRODUCT_STATUSES)}"
+        )
+    products = self.repository.get_by_status(status)
+    return [p.to_dict() for p in products]
+
+
+def _svc_get_discontinued_products(self) -> List[Dict[str, Any]]:
+    products = self.repository.get_discontinued_products()
+    return [p.to_dict() for p in products]
+
+
+def _svc_get_products_needing_replacement(self) -> List[Dict[str, Any]]:
+    products = self.repository.get_products_needing_replacement()
+    return [p.to_dict() for p in products]
+
+
+# Inject into ProductService
+ProductService.discontinue_product = _svc_discontinue_product
+ProductService.reactivate_product = _svc_reactivate_product
+ProductService.get_products_by_status = _svc_get_products_by_status
+ProductService.get_discontinued_products = _svc_get_discontinued_products
+ProductService.get_products_needing_replacement = _svc_get_products_needing_replacement
+
+
+# ======================================================================
+# ProductService – Historial de Cambios (injected method)
+# ======================================================================
+
+def _svc_get_product_change_history(
+    self,
+    product_id: int,
+    limit: int = 100,
+    field_name: str = None,
+) -> List[Dict[str, Any]]:
+    """Return the field-level change log for a product."""
+    history_repo = ProductChangeHistoryRepository(self.repository.db)
+    entries = history_repo.get_history(
+        product_id=product_id,
+        limit=limit,
+        field_name=field_name,
+    )
+    return [e.to_dict() for e in entries]
+
+
+ProductService.get_product_change_history = _svc_get_product_change_history
+
+
+# ======================================================================
+# CategoryService – Jerarquía (injected methods)
+# ======================================================================
+
+def _cat_svc_create_category(
+    self,
+    data: dict,
+    parent_id: int = None,
+) -> Dict[str, Any]:
+    """Create a category, automatically computing level and path.
+
+    Replaces the simple create_category on CategoryService.
+    If parent_id is supplied it overrides data['parent_category_id'].
+    """
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise ValueError("El nombre de la categoría es requerido")
+    if self.repository.name_exists(name):
+        raise ValueError(f"La categoría '{name}' ya existe")
+
+    if parent_id is not None:
+        data = {**data, "parent_category_id": parent_id}
+
+    parent_category_id = data.get("parent_category_id")
+
+    # Pre-compute level and path if parent is known
+    if parent_category_id:
+        parent_cat = self.repository.get_by_id(parent_category_id)
+        if not parent_cat:
+            raise ValueError(f"Categoría padre {parent_category_id} no encontrada")
+        level = (parent_cat.level or 0) + 1
+        parent_path = parent_cat.path or parent_cat.name
+        path = f"{parent_path} > {name}"
+    else:
+        level = 0
+        path = name
+
+    data = {**data, "name": name, "level": level, "path": path}
+    category = self.repository.create(data)
+    logger.info(f"Category created: {category.path}")
+    return category.to_dict()
+
+
+def _cat_svc_update_category(
+    self,
+    category_id: int,
+    data: dict,
+) -> Optional[Dict[str, Any]]:
+    """Update category and recompute level/path for it and all descendants."""
+    if "name" in data:
+        name = (data["name"] or "").strip()
+        if not name:
+            raise ValueError("El nombre de la categoría es requerido")
+        if self.repository.name_exists(name, exclude_id=category_id):
+            raise ValueError(f"La categoría '{name}' ya existe")
+        data = {**data, "name": name}
+
+    # If parent is being changed, recompute level+path
+    if "parent_category_id" in data or "name" in data:
+        cat = self.repository.get_by_id(category_id)
+        if cat:
+            merged_data = {**data}
+            new_parent_id = merged_data.get(
+                "parent_category_id",
+                cat.parent_category_id,
+            )
+            new_name = merged_data.get("name", cat.name)
+            if new_parent_id:
+                parent_cat = self.repository.get_by_id(new_parent_id)
+                if parent_cat:
+                    merged_data["level"] = (parent_cat.level or 0) + 1
+                    parent_path = parent_cat.path or parent_cat.name
+                    merged_data["path"] = f"{parent_path} > {new_name}"
+            else:
+                merged_data["level"] = 0
+                merged_data["path"] = new_name
+            data = merged_data
+
+    category = self.repository.update(category_id, data)
+    if not category:
+        return None
+
+    # Cascade level/path update to descendants
+    self.repository.update_level_path(category_id)
+    return category.to_dict()
+
+
+def _cat_svc_get_category_tree(self) -> List[Dict[str, Any]]:
+    """Return a recursive tree of all active root categories."""
+    roots = self.repository.get_root_categories()
+    return [r.to_dict_with_children() for r in roots]
+
+
+def _cat_svc_get_flat_category_list(self) -> List[Dict[str, Any]]:
+    """Return all active categories as a flat list ordered by level+name.
+
+    Each entry includes an 'indent' key (number of spaces × level) to
+    help build indented UI dropdowns.
+    """
+    categories = self.repository.get_all_with_level()
+    result = []
+    for cat in categories:
+        d = cat.to_dict()
+        d["display_name"] = ("  " * (cat.level or 0)) + cat.name
+        result.append(d)
+    return result
+
+
+def _cat_svc_get_products_in_category_tree(
+    self,
+    category_id: int,
+) -> List[Dict[str, Any]]:
+    """Return products in a category and all its sub-categories."""
+    products = self.repository.get_products_in_tree(category_id)
+    return [p.to_dict() for p in products]
+
+
+def _cat_svc_get_children(self, category_id: int) -> List[Dict[str, Any]]:
+    children = self.repository.get_children(category_id)
+    return [c.to_dict() for c in children]
+
+
+def _cat_svc_get_descendants(self, category_id: int) -> List[Dict[str, Any]]:
+    descendants = self.repository.get_descendants(category_id)
+    return [d.to_dict() for d in descendants]
+
+
+def _cat_svc_get_ancestors(self, category_id: int) -> List[Dict[str, Any]]:
+    ancestors = self.repository.get_ancestors(category_id)
+    return [a.to_dict() for a in ancestors]
+
+
+def _cat_svc_get_root_categories(self) -> List[Dict[str, Any]]:
+    roots = self.repository.get_root_categories()
+    return [r.to_dict() for r in roots]
+
+
+# Replace / extend CategoryService methods
+CategoryService.create_category = _cat_svc_create_category
+CategoryService.update_category = _cat_svc_update_category
+CategoryService.get_category_tree = _cat_svc_get_category_tree
+CategoryService.get_flat_category_list = _cat_svc_get_flat_category_list
+CategoryService.get_products_in_category_tree = _cat_svc_get_products_in_category_tree
+CategoryService.get_children = _cat_svc_get_children
+CategoryService.get_descendants = _cat_svc_get_descendants
+CategoryService.get_ancestors = _cat_svc_get_ancestors
+CategoryService.get_root_categories = _cat_svc_get_root_categories
+
+
+# ======================================================================
+# KitService
+# ======================================================================
+
+class KitService:
+    """Business logic for product kits."""
+
+    def __init__(self, db: Session):
+        self._kit_repo = KitComponentRepository(db)
+        self._product_repo = ProductRepository(db)
+
+    def set_as_kit(self, product_id: int) -> Dict[str, Any]:
+        """Mark a product as a kit."""
+        product = self._product_repo.get_by_id(product_id)
+        if not product:
+            raise ValueError(f"Producto {product_id} no encontrado")
+        product.is_kit = True
+        self._product_repo.db.commit()
+        self._product_repo.db.refresh(product)
+        logger.info(f"Product set as kit: {product.sku}")
+        return product.to_dict()
+
+    def unset_kit(self, product_id: int) -> Dict[str, Any]:
+        """Remove kit designation (and all its components)."""
+        product = self._product_repo.get_by_id(product_id)
+        if not product:
+            raise ValueError(f"Producto {product_id} no encontrado")
+        self._kit_repo.remove_all(product_id)
+        product.is_kit = False
+        self._product_repo.db.commit()
+        self._product_repo.db.refresh(product)
+        logger.info(f"Product unset as kit: {product.sku}")
+        return product.to_dict()
+
+    def add_component(
+        self,
+        kit_product_id: int,
+        component_product_id: int,
+        quantity: int = 1,
+        notes: str = None,
+    ) -> Dict[str, Any]:
+        """Add a component to a kit."""
+        if kit_product_id == component_product_id:
+            raise ValueError("Un producto no puede ser componente de sí mismo")
+        if quantity < 1:
+            raise ValueError("La cantidad debe ser al menos 1")
+
+        kit = self._product_repo.get_by_id(kit_product_id)
+        if not kit:
+            raise ValueError(f"Kit {kit_product_id} no encontrado")
+        if not kit.is_kit:
+            raise ValueError(f"El producto {kit.sku} no está marcado como kit")
+
+        component = self._kit_repo.add(
+            kit_product_id=kit_product_id,
+            component_product_id=component_product_id,
+            quantity=quantity,
+            notes=notes,
+        )
+
+        event_bus.emit(settings.Events.KIT_COMPONENT_ADDED, {
+            "kit_product_id": kit_product_id,
+            "component_product_id": component_product_id,
+            "quantity": quantity,
+        })
+        return component.to_dict_full()
+
+    def remove_component(
+        self,
+        kit_product_id: int,
+        component_product_id: int,
+    ) -> bool:
+        """Remove a component from a kit."""
+        success = self._kit_repo.remove(kit_product_id, component_product_id)
+        if success:
+            event_bus.emit(settings.Events.KIT_COMPONENT_REMOVED, {
+                "kit_product_id": kit_product_id,
+                "component_product_id": component_product_id,
+            })
+        return success
+
+    def get_kit_components(self, kit_product_id: int) -> List[Dict[str, Any]]:
+        """Return all components of a kit with embedded product info."""
+        components = self._kit_repo.get_components(kit_product_id)
+        return [c.to_dict_full() for c in components]
+
+    def explode_kit(self, kit_product_id: int) -> List[Dict[str, Any]]:
+        """Return a flat list of components with quantities.
+
+        If a component is itself a kit, it is NOT recursively exploded
+        (single-level only, matching the design spec).
+        """
+        return self.get_kit_components(kit_product_id)
+
+    def get_kits_containing(self, product_id: int) -> List[Dict[str, Any]]:
+        """Return all kits that include the given product as a component."""
+        rows = self._kit_repo.get_kits_containing(product_id)
+        result = []
+        for row in rows:
+            kit = self._product_repo.get_by_id(row.kit_product_id)
+            if kit:
+                d = kit.to_dict()
+                d["quantity_in_kit"] = row.quantity
+                result.append(d)
+        return result
+
+    def update_component_quantity(
+        self,
+        kit_product_id: int,
+        component_product_id: int,
+        quantity: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Update the quantity of a component within a kit."""
+        if quantity < 1:
+            raise ValueError("La cantidad debe ser al menos 1")
+        entry = self._kit_repo.update_quantity(
+            kit_product_id, component_product_id, quantity
+        )
+        return entry.to_dict_full() if entry else None

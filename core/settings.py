@@ -123,5 +123,12 @@ class Settings:
         USER_UPDATED = "user.updated"
         USER_DELETED = "user.deleted"
 
+        # Product expansion events
+        PRODUCT_VARIANT_CREATED = "product.variant_created"
+        PRODUCT_DISCONTINUED = "product.discontinued"
+        PRODUCT_REACTIVATED = "product.reactivated"
+        KIT_COMPONENT_ADDED = "product.kit_component_added"
+        KIT_COMPONENT_REMOVED = "product.kit_component_removed"
+
 
 settings = Settings()
