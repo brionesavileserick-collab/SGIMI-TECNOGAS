@@ -152,15 +152,20 @@ class UserService:
         logger.info(f"User updated: {user.email}")
         return user.to_dict()
 
-    def delete_user(self, user_id: int) -> bool:
+    def delete_user(self, user_id: int, deleted_by_user: Optional[User] = None) -> bool:
         """Soft delete user."""
         user = self.repository.get_by_id(user_id)
         if not user:
             return False
 
+        # Validate permissions if a deleter is provided
+        if deleted_by_user is not None:
+            if not self.can_delete_user(deleted_by_user, user):
+                raise PermissionError("No tienes permisos para eliminar este usuario")
+
         success = self.repository.delete(user_id)
         if success:
-            self.log_activity(user.id, "delete_user", user_id, {"deleted": True})
+            self.log_activity(deleted_by_user.id if deleted_by_user else None, "delete_user", user_id, {"deleted": True})
             # Emit event
             event_data = {
                 "user_id": user_id,
@@ -203,6 +208,14 @@ class UserService:
             return True
         if editor.role == "gerente":
             return target_user.role == "empleado" and target_user.assigned_branch_id == editor.assigned_branch_id
+        return False
+
+    def can_delete_user(self, deleter: User, target_user: User) -> bool:
+        """Verify whether a deleter can delete another user."""
+        if deleter.role == "admin":
+            return True
+        if deleter.role == "gerente":
+            return target_user.role == "empleado" and target_user.assigned_branch_id == deleter.assigned_branch_id
         return False
 
     def filter_by_access(self, user: User, query):

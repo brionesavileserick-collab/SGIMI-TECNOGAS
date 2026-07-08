@@ -340,8 +340,10 @@ class UserListView(QWidget):
 
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                self.service.delete_user(user_id)
+                self.service.delete_user(user_id, deleted_by_user=self.current_user)
                 QMessageBox.information(self, "Exito", "Usuario eliminado exitosamente")
                 self.load_users(self.search_input.text() or None)
+            except PermissionError as e:
+                QMessageBox.warning(self, "Permiso Denegado", str(e))
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Error al eliminar usuario: {str(e)}")
