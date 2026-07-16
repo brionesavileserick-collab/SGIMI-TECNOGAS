@@ -135,6 +135,11 @@ class Inventory(Base):
         """Alias retrocompatible de location_free."""
         return self.location_free
 
+    @location.setter
+    def location(self, value: Optional[str]):
+        """Setter para mantener retrocompatibilidad con location_free."""
+        self.location_free = value
+
     @property
     def location_path(self) -> Optional[str]:
         """Ruta jerárquica formateada o ubicación libre."""
