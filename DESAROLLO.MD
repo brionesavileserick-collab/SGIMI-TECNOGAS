@@ -57,7 +57,6 @@ SGIMI TECNOGAS/
 │
 ├── database/
 │   ├── migrations/
-│   ├── seed.py
 │
 ├── utils/
 │   ├── validators.py

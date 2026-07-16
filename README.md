@@ -89,8 +89,8 @@ SGIMI TECNOGAS/
 │   ├── alerts/
 │   ├── history/
 │   └── reports/
-├── database/                # Scripts de DB
-│   └── seed.py
+├── database/                # Scripts de DB y migraciones
+│   └── migrations/
 ├── utils/                    # Utilidades
 │   ├── validators.py
 │   └── helpers.py
