@@ -68,6 +68,27 @@ class ProductService:
 
         product = self.repository.create(product_data)
 
+        # Automatically create inventory record for the active session branch
+        from modules.branches.service import BranchService
+        from modules.inventory.service import InventoryService
+        
+        branch_service = BranchService(self.repository.db)
+        current_branch = branch_service.get_current_session_branch()
+        
+        if current_branch:
+            inventory_service = InventoryService(self.repository.db)
+            try:
+                inventory_service.create_inventory({
+                    "product_id": product.id,
+                    "branch_id": current_branch["id"],
+                    "physical_stock": 0,
+                    "digital_stock": 0,
+                    "min_stock": 0,
+                })
+                logger.info(f"Inventory created for product {product.sku} in branch {current_branch['name']}")
+            except Exception as e:
+                logger.warning(f"Failed to create inventory for product {product.sku} in branch {current_branch['name']}: {e}")
+
         event_bus.emit(settings.Events.PRODUCT_CREATED, {
             "product_id": product.id,
             "sku": product.sku,
