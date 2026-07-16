@@ -12,6 +12,7 @@ from core.settings import settings
 from models.branch import OPERATIONAL_STATUS_VALUES, COUNT_FREQUENCY_VALUES
 from utils.validators import validate_name
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -733,15 +734,17 @@ class BranchService:
     # ------------------------------------------------------------------
 
     _session_branch_id: Optional[int] = None   # volátil – se pierde al cerrar la app
+    _session_lock = threading.Lock()           # protección thread-safe para operaciones de sesión
 
     def get_current_session_branch(self) -> Optional[Dict[str, Any]]:
         """
         Return the branch currently active for this working session.
         Returns None when no session branch has been set.
         """
-        if BranchService._session_branch_id is None:
-            return None
-        return self.get_branch(BranchService._session_branch_id)
+        with BranchService._session_lock:
+            if BranchService._session_branch_id is None:
+                return None
+            return self.get_branch(BranchService._session_branch_id)
 
     def set_current_session_branch(self, branch_id: int) -> Dict[str, Any]:
         """
@@ -756,13 +759,15 @@ class BranchService:
             raise ValueError(
                 f"Sucursal '{branch.name}' está inactiva y no puede usarse como sucursal de trabajo"
             )
-        BranchService._session_branch_id = branch_id
+        with BranchService._session_lock:
+            BranchService._session_branch_id = branch_id
         logger.info(f"Session branch set: {branch.name} (id={branch_id})")
         return branch.to_dict()
 
     def clear_session_branch(self) -> None:
         """Remove the current session branch (reset to unset state)."""
-        BranchService._session_branch_id = None
+        with BranchService._session_lock:
+            BranchService._session_branch_id = None
         logger.info("Session branch cleared")
 
     # ------------------------------------------------------------------

@@ -128,7 +128,13 @@ class CommunicationService:
             users = self.db.query(User).filter(User.is_active.is_(True)).all()
             recipient_ids = [user.id for user in users]
         else:
-            recipient_ids = []
+            # Get users from the specified branches
+            from models.user import User
+            users = self.db.query(User).filter(
+                User.is_active.is_(True),
+                User.branch_id.in_(branch_ids)
+            ).all()
+            recipient_ids = [user.id for user in users]
         for recipient_id in recipient_ids:
             self.repository.add_recipient(communication["id"], {
                 "recipient_id": recipient_id,

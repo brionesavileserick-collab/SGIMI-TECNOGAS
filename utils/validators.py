@@ -81,8 +81,8 @@ def validate_quantity(quantity: int) -> Tuple[bool, Optional[str]]:
     if not isinstance(quantity, (int, float)):
         return False, "La cantidad debe ser un numero"
 
-    if quantity < 0:
-        return False, "La cantidad no puede ser negativa"
+    if quantity <= 0:
+        return False, "La cantidad debe ser mayor a cero"
 
     if quantity > 999999:
         return False, "La cantidad excede el limite maximo"

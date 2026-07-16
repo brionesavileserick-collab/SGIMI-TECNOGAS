@@ -675,8 +675,6 @@ class MovementService:
         is_valid, error = validate_quantity(movement_data.get("quantity"))
         if not is_valid:
             raise ValueError(error)
-        if movement_data.get("quantity") == 0:
-            raise ValueError("La cantidad debe ser mayor a cero")
         if not movement_data.get("product_id"):
             raise ValueError("El producto es requerido")
         if not movement_data.get("branch_id"):

@@ -26,6 +26,8 @@ def parse_datetime(dt_str: str, format_str: str = "%Y-%m-%d %H:%M:%S") -> Option
 
 def format_number(number: int or float, decimals: int = 2) -> str:
     """Format number with thousands separator."""
+    if not isinstance(number, (int, float)):
+        raise TypeError(f"format_number expects int or float, got {type(number).__name__}")
     if isinstance(number, float):
         return f"{number:,.{decimals}f}"
     return f"{number:,}"

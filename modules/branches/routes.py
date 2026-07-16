@@ -712,7 +712,8 @@ class BranchListView(QWidget):
     # ── Session combo helper ───────────────────────────────────────────────
     def _refresh_session_combo(self, branches: list):
         """Repopulate the session branch dropdown."""
-        current_id = self.service._session_branch_id
+        current_session = self.service.get_current_session_branch()
+        current_id = current_session["id"] if current_session else None
         self.session_combo.blockSignals(True)
         self.session_combo.clear()
         self.session_combo.addItem("(sin selección)", None)
@@ -723,9 +724,8 @@ class BranchListView(QWidget):
             idx = self.session_combo.findData(current_id)
             if idx >= 0:
                 self.session_combo.setCurrentIndex(idx)
-            sess = self.service.get_current_session_branch()
-            if sess:
-                self.session_label.setText(f"Activa: {sess['name']}")
+            if current_session:
+                self.session_label.setText(f"Activa: {current_session['name']}")
                 self.session_label.setStyleSheet("color: #2e7d32; font-weight: bold;")
         else:
             self.session_label.setText("(ninguna)")

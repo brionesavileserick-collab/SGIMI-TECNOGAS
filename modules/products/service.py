@@ -68,15 +68,17 @@ class ProductService:
 
         product = self.repository.create(product_data)
 
-        # Automatically create inventory record for the active session branch
+        # Automatically create inventory record for branches
         from modules.branches.service import BranchService
         from modules.inventory.service import InventoryService
+        from models.branch import Branch
         
         branch_service = BranchService(self.repository.db)
         current_branch = branch_service.get_current_session_branch()
+        inventory_service = InventoryService(self.repository.db)
         
         if current_branch:
-            inventory_service = InventoryService(self.repository.db)
+            # Create inventory for the active session branch
             try:
                 inventory_service.create_inventory({
                     "product_id": product.id,
@@ -88,6 +90,21 @@ class ProductService:
                 logger.info(f"Inventory created for product {product.sku} in branch {current_branch['name']}")
             except Exception as e:
                 logger.warning(f"Failed to create inventory for product {product.sku} in branch {current_branch['name']}: {e}")
+        else:
+            # If no active session branch, create inventory in all active branches
+            active_branches = self.repository.db.query(Branch).filter(Branch.is_active == True).all()
+            for branch in active_branches:
+                try:
+                    inventory_service.create_inventory({
+                        "product_id": product.id,
+                        "branch_id": branch.id,
+                        "physical_stock": 0,
+                        "digital_stock": 0,
+                        "min_stock": 0,
+                    })
+                    logger.info(f"Inventory created for product {product.sku} in branch {branch.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to create inventory for product {product.sku} in branch {branch.name}: {e}")
 
         event_bus.emit(settings.Events.PRODUCT_CREATED, {
             "product_id": product.id,

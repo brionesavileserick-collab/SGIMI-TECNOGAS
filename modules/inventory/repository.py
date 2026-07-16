@@ -29,9 +29,13 @@ class InventoryRepository:
         """Create a new inventory record."""
         inventory = Inventory(**inventory_data)
         self.db.add(inventory)
-        self.db.commit()
-        self.db.refresh(inventory)
-        return inventory
+        try:
+            self.db.commit()
+            self.db.refresh(inventory)
+            return inventory
+        except Exception as e:
+            self.db.rollback()
+            raise e
 
     def get_by_id(self, inventory_id: int) -> Optional[Inventory]:
         """Get inventory by ID."""
@@ -165,14 +169,28 @@ class InventoryRepository:
         physical_stock: int = None,
         digital_stock: int = None,
         notes: str = None,
-    ) -> Optional[Inventory]:
+    ) -> Inventory:
         """
         Set absolute stock values.
         Expansión 2: acepta parámetro opcional `notes` para last_count_notes.
+        If inventory does not exist, it will be created automatically.
         """
         inventory = self.get_by_product_branch(product_id, branch_id)
+        
         if not inventory:
-            return None
+            # Create inventory record if it doesn't exist
+            inventory_data = {
+                "product_id": product_id,
+                "branch_id": branch_id,
+                "physical_stock": physical_stock if physical_stock is not None else 0,
+                "digital_stock": digital_stock if digital_stock is not None else 0,
+                "min_stock": 0,
+            }
+            inventory = self.create(inventory_data)
+            if notes is not None:
+                inventory.last_count_notes = notes
+                inventory.last_count_date = datetime.utcnow()
+            return inventory
 
         if physical_stock is not None:
             inventory.physical_stock = physical_stock
