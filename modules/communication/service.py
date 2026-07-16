@@ -129,10 +129,9 @@ class CommunicationService:
             recipient_ids = [user.id for user in users]
         else:
             # Get users from the specified branches
-            from models.user import User
             users = self.db.query(User).filter(
                 User.is_active.is_(True),
-                User.branch_id.in_(branch_ids)
+                User.assigned_branch_id.in_(branch_ids)
             ).all()
             recipient_ids = [user.id for user in users]
         for recipient_id in recipient_ids:
