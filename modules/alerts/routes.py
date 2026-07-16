@@ -779,6 +779,17 @@ class AlertListView(QWidget):
         """Reload whichever tab is visible, plus the badge."""
         self.open_tab.load_data()
         if self.tabs.currentIndex() == 1:
+            # Clean up old resolved alerts when refreshing history tab
+            try:
+                deleted_count = self.service.clear_old_alerts(days=30)
+                if deleted_count > 0:
+                    QMessageBox.information(
+                        self,
+                        "Limpieza de Historial",
+                        f"Se eliminaron {deleted_count} alertas resueltas viejas (más de 30 días)."
+                    )
+            except Exception as e:
+                logger.error(f"Error clearing old alerts: {e}")
             self.history_tab.load_data()
 
     def refresh(self):
