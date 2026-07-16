@@ -19,6 +19,7 @@ class InventoryService:
     """Service for inventory business logic."""
 
     def __init__(self, db: Session):
+        self.db = db
         self.repository = InventoryRepository(db)
 
     # ------------------------------------------------------------------

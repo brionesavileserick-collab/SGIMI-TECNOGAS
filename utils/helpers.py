@@ -3,7 +3,7 @@ Helper utilities for common operations.
 """
 
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import json
 
 
@@ -24,7 +24,7 @@ def parse_datetime(dt_str: str, format_str: str = "%Y-%m-%d %H:%M:%S") -> Option
         return None
 
 
-def format_number(number: int or float, decimals: int = 2) -> str:
+def format_number(number: Union[int, float], decimals: int = 2) -> str:
     """Format number with thousands separator."""
     if not isinstance(number, (int, float)):
         raise TypeError(f"format_number expects int or float, got {type(number).__name__}")
