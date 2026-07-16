@@ -54,7 +54,6 @@ class UserService:
         if "role" not in user_data:
             user_data["role"] = "empleado"
         user_data.setdefault("is_branch_manager", False)
-        user_data.setdefault("is_admin", False)
         if created_by_user is not None:
             user_data["created_by"] = created_by_user.id
 

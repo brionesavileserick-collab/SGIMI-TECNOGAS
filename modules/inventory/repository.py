@@ -154,6 +154,10 @@ class InventoryRepository:
         if not inventory:
             return None
 
+        # Validate stock won't go negative
+        if inventory.digital_stock + digital_change < 0:
+            raise ValueError("Stock digital insuficiente para realizar esta operación")
+
         inventory.physical_stock += physical_change
         inventory.digital_stock += digital_change
         inventory.updated_at = datetime.utcnow()

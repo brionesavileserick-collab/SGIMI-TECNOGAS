@@ -5,6 +5,7 @@ Expansiones 1-9 implementadas. Todos los métodos originales son retrocompatible
 
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from modules.inventory.repository import InventoryRepository
 from core.event_bus import event_bus
 from core.settings import settings
@@ -29,13 +30,14 @@ class InventoryService:
         product_id = inventory_data.get("product_id")
         branch_id = inventory_data.get("branch_id")
 
-        if self.repository.exists(product_id, branch_id):
+        try:
+            inventory = self.repository.create(inventory_data)
+            self._emit_inventory_updated(inventory)
+            logger.info(f"Inventory created: Product {product_id} at Branch {branch_id}")
+            return inventory.to_dict()
+        except IntegrityError:
+            self.db.rollback()
             raise ValueError("El inventario para este producto y sucursal ya existe")
-
-        inventory = self.repository.create(inventory_data)
-        self._emit_inventory_updated(inventory)
-        logger.info(f"Inventory created: Product {product_id} at Branch {branch_id}")
-        return inventory.to_dict()
 
     def get_inventory(self, inventory_id: int) -> Optional[Dict[str, Any]]:
         """Get inventory by ID."""

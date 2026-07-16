@@ -68,6 +68,13 @@ class InventoryHandlers:
         Updates digital stock based on validated movement.
         """
         try:
+            # Validate database session is still active
+            try:
+                self.db.execute("SELECT 1")
+            except Exception as session_error:
+                logger.error(f"Database session is invalid: {session_error}")
+                return
+
             product_id = data.get("product_id")
             branch_id = data.get("branch_id")
             movement_type = data.get("movement_type")
@@ -115,6 +122,13 @@ class InventoryHandlers:
         Logs discrepancy detection — physical stock is already updated by adjust_physical_stock.
         """
         try:
+            # Validate database session is still active
+            try:
+                self.db.execute("SELECT 1")
+            except Exception as session_error:
+                logger.error(f"Database session is invalid: {session_error}")
+                return
+
             product_id = data.get("product_id")
             branch_id = data.get("branch_id")
             physical_stock = data.get("physical_stock")
@@ -141,6 +155,13 @@ class InventoryHandlers:
         Increases stock at destination branch.
         """
         try:
+            # Validate database session is still active
+            try:
+                self.db.execute("SELECT 1")
+            except Exception as session_error:
+                logger.error(f"Database session is invalid: {session_error}")
+                return
+
             product_id = data.get("product_id")
             destination_branch_id = data.get("destination_branch_id")
             quantity = data.get("quantity")

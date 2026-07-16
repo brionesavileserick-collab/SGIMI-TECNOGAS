@@ -151,7 +151,8 @@ class MovementService:
 
     def validate_movement(self, movement_id: int, validator_id: int) -> Optional[Dict[str, Any]]:
         """Validate a pending movement and emit event."""
-        movement = self.repository.get_by_id(movement_id)
+        # Use row lock to prevent race condition
+        movement = self.repository.get_by_id_for_update(movement_id)
         if not movement:
             return None
         if movement.state != "pendiente":
@@ -342,15 +343,22 @@ class MovementService:
                 "source": "system",
             }
 
-        compensatory = self.repository.create(compensatory_data)
-        self._log_state_change(
-            compensatory.id,
-            new_state=compensatory.state,
-            previous_state=None,
-            changed_by=user_id,
-            reason=f"Movimiento compensatorio del ID {original.id}",
-        )
+        # Atomic transaction: create movement and log state change together
+        try:
+            compensatory = self.repository.create(compensatory_data)
+            self._log_state_change(
+                compensatory.id,
+                new_state=compensatory.state,
+                previous_state=None,
+                changed_by=user_id,
+                reason=f"Movimiento compensatorio del ID {original.id}",
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
 
+        # Emit event outside transaction (non-critical)
         event_bus.emit(settings.Events.MOVEMENT_REVERSED, {
             "original_movement_id": original.id,
             "compensatory_movement_id": compensatory.id,

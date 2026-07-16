@@ -44,6 +44,13 @@ class MovementHandlers:
 
     def handle_movement_created(self, data: Dict[str, Any]):
         """Handle movement.created event."""
+        # Validate database session is still active
+        try:
+            self.db.execute("SELECT 1")
+        except Exception as session_error:
+            logger.error(f"Database session is invalid: {session_error}")
+            return
+
         logger.info(
             f"[movement.created] ID={data.get('movement_id')} "
             f"type={data.get('movement_type')} qty={data.get('quantity')} "
@@ -53,6 +60,13 @@ class MovementHandlers:
 
     def handle_movement_validated(self, data: Dict[str, Any]):
         """Handle movement.validated event."""
+        # Validate database session is still active
+        try:
+            self.db.execute("SELECT 1")
+        except Exception as session_error:
+            logger.error(f"Database session is invalid: {session_error}")
+            return
+
         logger.info(
             f"[movement.validated] ID={data.get('movement_id')} "
             f"type={data.get('movement_type')} qty={data.get('quantity')} "
@@ -62,6 +76,13 @@ class MovementHandlers:
 
     def handle_movement_rejected(self, data: Dict[str, Any]):
         """Handle movement.rejected event."""
+        # Validate database session is still active
+        try:
+            self.db.execute("SELECT 1")
+        except Exception as session_error:
+            logger.error(f"Database session is invalid: {session_error}")
+            return
+
         logger.info(
             f"[movement.rejected] ID={data.get('movement_id')} "
             f"reason='{data.get('reason')}' validator={data.get('validator_id')}"
@@ -69,6 +90,13 @@ class MovementHandlers:
 
     def handle_transfer_sent(self, data: Dict[str, Any]):
         """Handle transfer.sent event."""
+        # Validate database session is still active
+        try:
+            self.db.execute("SELECT 1")
+        except Exception as session_error:
+            logger.error(f"Database session is invalid: {session_error}")
+            return
+
         logger.info(
             f"[transfer.sent] movement={data.get('movement_id')} "
             f"product={data.get('product_id')} qty={data.get('quantity')} "
@@ -84,6 +112,13 @@ class MovementHandlers:
 
     def handle_movement_cancelled(self, data: Dict[str, Any]):
         """Handle movement.cancelled event."""
+        # Validate database session is still active
+        try:
+            self.db.execute("SELECT 1")
+        except Exception as session_error:
+            logger.error(f"Database session is invalid: {session_error}")
+            return
+
         logger.info(
             f"[movement.cancelled] ID={data.get('movement_id')} "
             f"type={data.get('movement_type')} qty={data.get('quantity')} "
@@ -96,6 +131,13 @@ class MovementHandlers:
         Emitted when a compensatory movement is created to undo a cancelled one.
         The compensatory movement still requires validation through the normal flow.
         """
+        # Validate database session is still active
+        try:
+            self.db.execute("SELECT 1")
+        except Exception as session_error:
+            logger.error(f"Database session is invalid: {session_error}")
+            return
+
         logger.info(
             f"[movement.reversed] original={data.get('original_movement_id')} "
             f"compensatory={data.get('compensatory_movement_id')} "
@@ -109,6 +151,13 @@ class MovementHandlers:
 
     def handle_transfer_rejected(self, data: Dict[str, Any]):
         """Handle transfer.rejected event (reception rejected by destination branch)."""
+        # Validate database session is still active
+        try:
+            self.db.execute("SELECT 1")
+        except Exception as session_error:
+            logger.error(f"Database session is invalid: {session_error}")
+            return
+
         logger.warning(
             f"[transfer.rejected] movement={data.get('movement_id')} "
             f"product={data.get('product_id')} qty={data.get('quantity')} "

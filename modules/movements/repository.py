@@ -42,6 +42,12 @@ class MovementRepository:
         """Get movement by ID."""
         return self.db.query(Movement).filter(Movement.id == movement_id).first()
 
+    def get_by_id_for_update(self, movement_id: int) -> Optional[Movement]:
+        """Get movement by ID with row lock (SELECT FOR UPDATE)."""
+        return self.db.query(Movement).filter(
+            Movement.id == movement_id
+        ).with_for_update().first()
+
     def get_all(
         self,
         skip: int = 0,

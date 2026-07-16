@@ -27,7 +27,6 @@ class User(Base):
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     last_activity = Column(DateTime(timezone=True), nullable=True)
     is_first_login = Column(Boolean, nullable=False, default=True)
-    is_admin = Column(Boolean, default=False, nullable=True)
 
     # Relationships
     movements = relationship("Movement", back_populates="user", foreign_keys="Movement.user_id")
@@ -64,5 +63,4 @@ class User(Base):
             "created_by": self.created_by,
             "last_activity": self.last_activity.isoformat() if self.last_activity else None,
             "is_first_login": self.is_first_login,
-            "is_admin": self.is_admin or False,
         }
