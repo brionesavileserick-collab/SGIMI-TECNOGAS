@@ -694,6 +694,35 @@ class MainWindow(QMainWindow):
 
             self.content_stack.setCurrentIndex(view_index)
 
+    def navigate(self, module: str, **kwargs):
+        """
+        Navigate to a module with optional parameters.
+        Used by dashboard quick action buttons.
+        """
+        # Map module names to view names
+        module_mapping = {
+            "movements": "Movimientos",
+            "inventory": "Inventario",
+            "alerts": "Alertas",
+            "products": "Productos",
+            "branches": "Sucursales",
+            "dashboard": "Dashboard",
+        }
+
+        view_name = module_mapping.get(module, module.capitalize())
+        self.switch_view(view_name)
+
+        # Handle filters or actions if provided
+        if kwargs:
+            if hasattr(self, f"{module}_view"):
+                view = getattr(self, f"{module}_view")
+                # Apply filter if supported by the view
+                if hasattr(view, "apply_filter"):
+                    view.apply_filter(kwargs.get("filter"))
+                # Handle action if supported
+                if hasattr(view, "handle_action"):
+                    view.handle_action(kwargs.get("action"))
+
     def refresh_current_view(self):
         """Refresh current view — all views implement load_data()."""
         current_widget = self.content_stack.currentWidget()
