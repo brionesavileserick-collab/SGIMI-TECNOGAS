@@ -203,6 +203,8 @@ class InventoryRepository:
                 inventory.last_count_notes = notes
 
         if digital_stock is not None:
+            if digital_stock < 0:
+                raise ValueError("El stock digital no puede ser negativo")
             inventory.digital_stock = digital_stock
 
         inventory.updated_at = datetime.utcnow()

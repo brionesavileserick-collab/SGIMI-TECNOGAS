@@ -386,6 +386,7 @@ class MainWindow(QMainWindow):
         self.user = user
         self.db = db
         self.handlers = []
+        self._syncing_combo = False
         self.setup_ui()
         self.setup_handlers()
         self.setWindowTitle(f"{APP_TITLE} - v{APP_VERSION}")
@@ -786,14 +787,19 @@ class MainWindow(QMainWindow):
 
     def _set_matrix_mode(self):
         """Switch to matrix (global) mode."""
-        operation_mode.set_matrix_mode()
-        # Sync combo selection back to Matrix (index 0)
-        self.mode_combo.blockSignals(True)
-        self.mode_combo.setCurrentIndex(0)
-        self.mode_combo.blockSignals(False)
+        self._syncing_combo = True
+        try:
+            operation_mode.set_matrix_mode()
+            # Sync combo selection back to Matrix (index 0)
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentIndex(0)
+            self.mode_combo.blockSignals(False)
+        finally:
+            self._syncing_combo = False
 
     def _set_branch_mode(self, branch_id: int, branch_name: str):
         """Switch to branch mode for the given branch."""
+        self._syncing_combo = True
         try:
             operation_mode.set_branch_mode(branch_id, branch_name)
             # Sync combo to the selected branch
@@ -804,6 +810,8 @@ class MainWindow(QMainWindow):
                 self.mode_combo.blockSignals(False)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo cambiar el modo: {e}")
+        finally:
+            self._syncing_combo = False
 
     def _on_mode_changed(self, mode: str, branch_id):
         """Callback fired by operation_mode singleton on every mode change.
@@ -811,6 +819,10 @@ class MainWindow(QMainWindow):
         Updates the toolbar indicator label and the window status bar.
         Refreshes the inventory and movements views immediately.
         """
+        # Avoid re-entrancy during programmatic combo synchronization
+        if self._syncing_combo:
+            return
+
         label = operation_mode.label()
 
         # Update toolbar indicator
