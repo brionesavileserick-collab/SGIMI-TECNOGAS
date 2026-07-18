@@ -39,11 +39,7 @@ class InventoryHandlers:
             self.handle_discrepancy_tolerance_breached,
         )
 
-        # Expansión 6: tránsito
-        event_bus.subscribe(settings.Events.STOCK_IN_TRANSIT_ADDED, self.handle_in_transit_added)
-        event_bus.subscribe(
-            settings.Events.STOCK_IN_TRANSIT_RECEIVED, self.handle_in_transit_received
-        )
+        # Expansión 6: tránsito (ELIMINADO - usar movimientos de transferencia)
 
         # Workflow de conteos (sesiones)
         event_bus.subscribe(settings.Events.COUNT_SESSION_CREATED, self.handle_count_session_created)
@@ -254,36 +250,8 @@ class InventoryHandlers:
             logger.error(f"Error handling discrepancy_tolerance_breached: {e}")
 
     # ------------------------------------------------------------------
-    # Expansión 6: tránsito
+    # Expansión 6: tránsito (ELIMINADO - usar movimientos de transferencia)
     # ------------------------------------------------------------------
-
-    def handle_in_transit_added(self, data: Dict[str, Any]):
-        """
-        Expansión 6 - Reacciona a inventory.in_transit_added.
-        """
-        try:
-            logger.info(
-                f"EN TRÁNSITO: inventory={data.get('inventory_id')}, "
-                f"product={data.get('product_id')}, branch={data.get('branch_id')}, "
-                f"+{data.get('quantity_added')} (total={data.get('total_in_transit')})"
-            )
-        except Exception as e:
-            logger.error(f"Error handling in_transit_added: {e}")
-
-    def handle_in_transit_received(self, data: Dict[str, Any]):
-        """
-        Expansión 6 - Reacciona a inventory.in_transit_received.
-        """
-        try:
-            logger.info(
-                f"TRÁNSITO RECIBIDO: inventory={data.get('inventory_id')}, "
-                f"product={data.get('product_id')}, branch={data.get('branch_id')}, "
-                f"recibido={data.get('quantity_received')}, "
-                f"nuevo_stock={data.get('new_digital_stock')}, "
-                f"restante_tránsito={data.get('remaining_in_transit')}"
-            )
-        except Exception as e:
-            logger.error(f"Error handling in_transit_received: {e}")
 
     # ------------------------------------------------------------------
     # Workflow de conteos (sesiones)
@@ -396,10 +364,7 @@ class InventoryHandlers:
             settings.Events.DISCREPANCY_TOLERANCE_BREACHED,
             self.handle_discrepancy_tolerance_breached,
         )
-        event_bus.unsubscribe(settings.Events.STOCK_IN_TRANSIT_ADDED, self.handle_in_transit_added)
-        event_bus.unsubscribe(
-            settings.Events.STOCK_IN_TRANSIT_RECEIVED, self.handle_in_transit_received
-        )
+        # Expansión 6: tránsito (ELIMINADO - usar movimientos de transferencia)
         # Workflow de conteos
         event_bus.unsubscribe(settings.Events.COUNT_SESSION_CREATED, self.handle_count_session_created)
         event_bus.unsubscribe(settings.Events.COUNT_SESSION_STARTED, self.handle_count_session_started)

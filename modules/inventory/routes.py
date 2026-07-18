@@ -42,11 +42,13 @@ class InventoryItemDialog(QDialog):
     Organizado en pestañas para no abrumar al usuario.
     """
 
-    def __init__(self, db: Session, inventory_data: dict, parent=None):
+    def __init__(self, db: Session, inventory_data: dict, current_user=None, parent=None):
         super().__init__(parent)
         self.db = db
         self.inventory_data = inventory_data
         self.service = InventoryService(db)
+        self.current_user = current_user
+        self.is_employee = bool(getattr(current_user, "role", None) == "empleado")
         self.setWindowTitle(
             f"Inventario — {inventory_data.get('product', {}).get('name', 'Producto')}"
             f" @ {inventory_data.get('branch', {}).get('name', 'Sucursal')}"
@@ -64,7 +66,7 @@ class InventoryItemDialog(QDialog):
         tabs.addTab(self._tab_tags(),       "Tags")
         tabs.addTab(self._tab_reposicion(), "Reposición")
         tabs.addTab(self._tab_alertas(),    "Alertas")
-        tabs.addTab(self._tab_transito(),   "Tránsito")
+        # Expansión 6: Tránsito eliminado - usar movimientos de transferencia
         tabs.addTab(self._tab_lotes(),      "Lotes")
         tabs.addTab(self._tab_valor(),      "Valor")
         root.addWidget(tabs)
@@ -117,6 +119,9 @@ class InventoryItemDialog(QDialog):
         self.new_digital.setRange(0, 999999)
         self.new_digital.setValue(d.get("digital_stock", 0))
         self.new_digital.valueChanged.connect(self._on_digital_changed)
+        # Restricción de rol: empleados no pueden ajustar stock digital
+        if self.is_employee:
+            self.new_digital.setEnabled(False)
         form.addRow("Ajustar stock digital:", self.new_digital)
 
         self.adjustment_reason = QLineEdit()
@@ -312,41 +317,7 @@ class InventoryItemDialog(QDialog):
         form.addRow(hint)
         return w
 
-    # ── Tab 6: Stock en tránsito ─────────────────────────────────────────
-    def _tab_transito(self) -> QWidget:
-        w = QWidget()
-        layout = QVBoxLayout(w)
-        layout.setContentsMargins(12, 12, 12, 12)
-
-        current = self.inventory_data.get("in_transit_quantity", 0)
-        layout.addWidget(QLabel(f"<b>En tránsito actual:</b> {current} unidades"))
-        layout.addWidget(QLabel(f"<b>Stock disponible:</b> {self.inventory_data.get('available_stock', 0)} unidades"))
-
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(sep)
-
-        add_box = QGroupBox("Agregar al tránsito")
-        add_form = QFormLayout(add_box)
-        self.transit_add_spin = QSpinBox()
-        self.transit_add_spin.setRange(1, 999999)
-        add_form.addRow("Cantidad a agregar:", self.transit_add_spin)
-        add_btn = QPushButton("Registrar envío en tránsito")
-        add_btn.clicked.connect(self._on_add_transit)
-        add_form.addRow(add_btn)
-        layout.addWidget(add_box)
-
-        recv_box = QGroupBox("Recibir del tránsito")
-        recv_form = QFormLayout(recv_box)
-        self.transit_recv_spin = QSpinBox()
-        self.transit_recv_spin.setRange(1, 999999)
-        recv_form.addRow("Cantidad a recibir:", self.transit_recv_spin)
-        recv_btn = QPushButton("Confirmar recepción")
-        recv_btn.clicked.connect(self._on_receive_transit)
-        recv_form.addRow(recv_btn)
-        layout.addWidget(recv_box)
-
-        layout.addStretch()
-        return w
+    # ── Tab 6: Stock en tránsito (ELIMINADO - usar movimientos de transferencia) ─────────────────────────────────────────
 
     # ── Tab 7: Lotes y fechas de caducidad ──────────────────────────────
     def _tab_lotes(self) -> QWidget:
@@ -496,32 +467,7 @@ class InventoryItemDialog(QDialog):
         return w
 
 
-    # ── Acciones de tránsito (dentro del diálogo) ────────────────────────
-    def _on_add_transit(self):
-        qty = self.transit_add_spin.value()
-        try:
-            self.service.add_to_transit(
-                self.inventory_data["product_id"],
-                self.inventory_data["branch_id"],
-                qty,
-            )
-            QMessageBox.information(self, "Éxito", f"+{qty} unidades registradas en tránsito.")
-            self.inventory_data = self.service.get_inventory(self.inventory_data["id"]) or self.inventory_data
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
-
-    def _on_receive_transit(self):
-        qty = self.transit_recv_spin.value()
-        try:
-            self.service.receive_transit(
-                self.inventory_data["product_id"],
-                self.inventory_data["branch_id"],
-                qty,
-            )
-            QMessageBox.information(self, "Éxito", f"{qty} unidades recibidas del tránsito.")
-            self.inventory_data = self.service.get_inventory(self.inventory_data["id"]) or self.inventory_data
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+    # ── Acciones de tránsito (ELIMINADO - usar movimientos de transferencia) ────────────────────────
 
     # ── Guardar todos los cambios ────────────────────────────────────────
     def _on_save(self):
@@ -536,6 +482,16 @@ class InventoryItemDialog(QDialog):
                 self.service.adjust_physical_stock(product_id, branch_id, new_phys, notes=notes)
             elif notes and notes != self.inventory_data.get("last_count_notes"):
                 self.service.update_inventory(inv_id, {"last_count_notes": notes})
+
+            # Ajuste de stock digital manual
+            new_digital = self.new_digital.value()
+            if new_digital != self.inventory_data.get("digital_stock"):
+                adj_reason = self.adjustment_reason.text().strip() or None
+                adj_by = self.adjusted_by_name.text().strip() or None
+                self.service.adjust_digital_stock(
+                    product_id, branch_id, new_digital,
+                    is_absolute=True, reason=adj_reason, adjusted_by_name=adj_by
+                )
 
             # Campos de actualización directa
             update_fields: dict = {}
@@ -1420,7 +1376,7 @@ class InventoryListView(QWidget):
             full = self.service.get_inventory(item["id"])
             if full:
                 item = full
-        dialog = InventoryItemDialog(self.db, item, parent=self)
+        dialog = InventoryItemDialog(self.db, item, current_user=self.current_user, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.load_inventory(self.search_input.text() or None)
 
