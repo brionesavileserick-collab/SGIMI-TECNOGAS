@@ -5,6 +5,7 @@ Expansiones 4, 5, 6: handlers para nuevos eventos de reposición, alertas y trá
 
 from typing import Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from modules.inventory.service import InventoryService
 from core.event_bus import event_bus
 from core.settings import settings
@@ -66,7 +67,7 @@ class InventoryHandlers:
         try:
             # Validate database session is still active
             try:
-                self.db.execute("SELECT 1")
+                self.db.execute(text("SELECT 1"))
             except Exception as session_error:
                 logger.error(f"Database session is invalid: {session_error}")
                 return
@@ -120,7 +121,7 @@ class InventoryHandlers:
         try:
             # Validate database session is still active
             try:
-                self.db.execute("SELECT 1")
+                self.db.execute(text("SELECT 1"))
             except Exception as session_error:
                 logger.error(f"Database session is invalid: {session_error}")
                 return
@@ -153,7 +154,7 @@ class InventoryHandlers:
         try:
             # Validate database session is still active
             try:
-                self.db.execute("SELECT 1")
+                self.db.execute(text("SELECT 1"))
             except Exception as session_error:
                 logger.error(f"Database session is invalid: {session_error}")
                 return

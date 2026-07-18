@@ -8,6 +8,7 @@ Handlers registrados:
 
 from typing import Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from modules.movements.service import MovementService
 from core.event_bus import event_bus
 from core.settings import settings
@@ -46,7 +47,7 @@ class MovementHandlers:
         """Handle movement.created event."""
         # Validate database session is still active
         try:
-            self.db.execute("SELECT 1")
+            self.db.execute(text("SELECT 1"))
         except Exception as session_error:
             logger.error(f"Database session is invalid: {session_error}")
             return
@@ -62,7 +63,7 @@ class MovementHandlers:
         """Handle movement.validated event."""
         # Validate database session is still active
         try:
-            self.db.execute("SELECT 1")
+            self.db.execute(text("SELECT 1"))
         except Exception as session_error:
             logger.error(f"Database session is invalid: {session_error}")
             return
@@ -78,7 +79,7 @@ class MovementHandlers:
         """Handle movement.rejected event."""
         # Validate database session is still active
         try:
-            self.db.execute("SELECT 1")
+            self.db.execute(text("SELECT 1"))
         except Exception as session_error:
             logger.error(f"Database session is invalid: {session_error}")
             return
@@ -92,7 +93,7 @@ class MovementHandlers:
         """Handle transfer.sent event."""
         # Validate database session is still active
         try:
-            self.db.execute("SELECT 1")
+            self.db.execute(text("SELECT 1"))
         except Exception as session_error:
             logger.error(f"Database session is invalid: {session_error}")
             return
@@ -114,7 +115,7 @@ class MovementHandlers:
         """Handle movement.cancelled event."""
         # Validate database session is still active
         try:
-            self.db.execute("SELECT 1")
+            self.db.execute(text("SELECT 1"))
         except Exception as session_error:
             logger.error(f"Database session is invalid: {session_error}")
             return
@@ -133,7 +134,7 @@ class MovementHandlers:
         """
         # Validate database session is still active
         try:
-            self.db.execute("SELECT 1")
+            self.db.execute(text("SELECT 1"))
         except Exception as session_error:
             logger.error(f"Database session is invalid: {session_error}")
             return
@@ -153,7 +154,7 @@ class MovementHandlers:
         """Handle transfer.rejected event (reception rejected by destination branch)."""
         # Validate database session is still active
         try:
-            self.db.execute("SELECT 1")
+            self.db.execute(text("SELECT 1"))
         except Exception as session_error:
             logger.error(f"Database session is invalid: {session_error}")
             return
