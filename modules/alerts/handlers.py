@@ -90,6 +90,7 @@ class AlertHandlers:
         try:
             product_id    = data.get("product_id")
             branch_id     = data.get("branch_id")
+            inventory_id  = data.get("inventory_id")
             digital_stock = data.get("digital_stock")
             physical_stock = data.get("physical_stock")
 
@@ -98,24 +99,26 @@ class AlertHandlers:
 
             if data.get("is_low_stock"):
                 self._create_low_stock_alert(
-                    product_id, branch_id, digital_stock, data.get("min_stock", 0)
+                    product_id, branch_id, digital_stock, data.get("min_stock", 0), inventory_id
                 )
             else:
                 self.service.resolve_open_alert(
                     alert_type="low_stock",
                     product_id=product_id,
                     branch_id=branch_id,
+                    event_id=str(inventory_id) if inventory_id else None,
                 )
 
             if data.get("has_discrepancy"):
                 self._create_discrepancy_alert(
-                    product_id, branch_id, physical_stock, digital_stock
+                    product_id, branch_id, physical_stock, digital_stock, inventory_id
                 )
             else:
                 self.service.resolve_open_alert(
                     alert_type="discrepancy",
                     product_id=product_id,
                     branch_id=branch_id,
+                    event_id=str(inventory_id) if inventory_id else None,
                 )
 
         except Exception as e:
@@ -363,13 +366,19 @@ class AlertHandlers:
     # ------------------------------------------------------------------ #
 
     def _create_low_stock_alert(self, product_id: int, branch_id: int,
-                                current_stock: int, min_stock: int):
-        """Create low-stock alert if none exists yet."""
+                                current_stock: int, min_stock: int, inventory_id: int = None):
+        """Create low-stock alert if none exists yet for this specific event."""
         existing = self.service.get_open_alert(
-            alert_type="low_stock", product_id=product_id, branch_id=branch_id
+            alert_type="low_stock", product_id=product_id, branch_id=branch_id, event_id=str(inventory_id) if inventory_id else None
         )
         if existing:
             return
+
+        # Resolve legacy alerts (event_id=NULL) when creating new alert with event_id
+        if inventory_id:
+            self.service.resolve_legacy_alerts(
+                alert_type="low_stock", product_id=product_id, branch_id=branch_id
+            )
 
         alert_data = self.service.create_alert(
             alert_type="low_stock",
@@ -381,17 +390,24 @@ class AlertHandlers:
             ),
             product_id=product_id,
             branch_id=branch_id,
+            event_id=str(inventory_id) if inventory_id else None,
         )
         self._emit_and_notify(alert_data)
 
     def _create_discrepancy_alert(self, product_id: int, branch_id: int,
-                                  physical_stock: int, digital_stock: int):
-        """Create discrepancy alert if none exists yet."""
+                                  physical_stock: int, digital_stock: int, inventory_id: int = None):
+        """Create discrepancy alert if none exists yet for this specific event."""
         existing = self.service.get_open_alert(
-            alert_type="discrepancy", product_id=product_id, branch_id=branch_id
+            alert_type="discrepancy", product_id=product_id, branch_id=branch_id, event_id=str(inventory_id) if inventory_id else None
         )
         if existing:
             return
+
+        # Resolve legacy alerts (event_id=NULL) when creating new alert with event_id
+        if inventory_id:
+            self.service.resolve_legacy_alerts(
+                alert_type="discrepancy", product_id=product_id, branch_id=branch_id
+            )
 
         difference = physical_stock - digital_stock
         message_data = self.service._build_message(
@@ -405,6 +421,7 @@ class AlertHandlers:
             message=message_data.get("message", f"Diferencia detectada: Físico={physical_stock}, Digital={digital_stock}, Diferencia={difference}"),
             product_id=product_id,
             branch_id=branch_id,
+            event_id=str(inventory_id) if inventory_id else None,
         )
         self._emit_and_notify(alert_data)
 
