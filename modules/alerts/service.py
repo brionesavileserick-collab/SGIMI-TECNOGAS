@@ -435,11 +435,21 @@ class AlertService:
                        movement_id: int = None,
                        group_key: Optional[str] = None,
                        event_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get an existing unresolved alert for the same operational condition."""
+        """Get an existing unresolved alert for the same operational condition.
+        When event_id is provided, searches for any alert (resolved or not) with that event_id
+        to prevent duplicate alerts for the same event occurrence."""
         query = self.db.query(Alert).filter(
             Alert.alert_type == alert_type,
-            Alert.is_resolved == False,
         )
+        
+        # When event_id is provided, search for any alert (resolved or not) with that event_id
+        # This prevents creating duplicate alerts for the same event occurrence
+        if event_id is not None:
+            query = query.filter(Alert.event_id == event_id)
+        else:
+            # Without event_id, only search for unresolved alerts (legacy behavior)
+            query = query.filter(Alert.is_resolved == False)
+        
         if product_id is None:
             query = query.filter(Alert.product_id.is_(None))
         else:
@@ -457,9 +467,6 @@ class AlertService:
 
         if group_key is not None:
             query = query.filter(Alert.group_key == group_key)
-
-        if event_id is not None:
-            query = query.filter(Alert.event_id == event_id)
 
         alert = query.order_by(Alert.created_at.desc()).first()
         return alert.to_dict() if alert else None
