@@ -583,8 +583,11 @@ class AlertService:
         return True
 
     def get_unread_count(self) -> int:
-        """Count unread alerts."""
-        return self.db.query(Alert).filter(Alert.is_read == False).count()
+        """Count unread alerts (only unresolved alerts)."""
+        return self.db.query(Alert).filter(
+            Alert.is_read == False,
+            Alert.is_resolved == False,
+        ).count()
 
     def get_critical_count(self) -> int:
         """Count critical unresolved alerts."""
