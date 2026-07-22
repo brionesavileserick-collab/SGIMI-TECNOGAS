@@ -25,6 +25,7 @@ from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QFont, QColor
 from modules.alerts.service import AlertService
 from config import ALERT_SEVERITIES, ALERT_PRIORITIES
+from core.operation_mode import operation_mode, MODE_MATRIX, MODE_BRANCH
 import logging
 
 _ALERT_TYPE_LABELS = {
@@ -718,7 +719,17 @@ class AlertListView(QWidget):
         super().__init__(parent)
         self.db = db
         self.service = AlertService(db)
+        # Mirrors operation_mode.current_branch_id for the active mode.
+        # Each tab keeps its own current_branch_id for its combo state.
+        self.current_branch_id = None
         self._build_ui()
+
+        # Apply the current operation mode (no data reload — tabs already
+        # loaded themselves in __init__ with the default "all branches" scope).
+        self.apply_operation_mode(operation_mode.mode, operation_mode.current_branch_id)
+
+        # Subscribe to future mode changes.
+        operation_mode.subscribe(self._on_operation_mode_changed)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -795,3 +806,55 @@ class AlertListView(QWidget):
     def refresh(self):
         """Public method called by external code (e.g. ALERT_GENERATED handler)."""
         self._on_refresh()
+
+    # ── Operation-mode integration ───────────────────────────────────────
+    def apply_operation_mode(self, mode: str, branch_id):
+        """Lock/unlock the branch filter on each tab to match the operation mode.
+
+        Branch mode: each tab's ``current_branch_id`` and ``branch_combo`` are
+        forced to ``branch_id`` so the user cannot change them.  Matrix mode:
+        the branch filter is cleared (combo → "Todas las sucursales" / data=None)
+        so the view shows alerts from every branch.
+
+        Called on init and from ``_on_operation_mode_changed`` on every switch.
+        Does *not* reload data — the caller decides when to fetch.
+        """
+        if mode == MODE_BRANCH and branch_id:
+            for tab in (self.open_tab, self.history_tab):
+                tab.current_branch_id = branch_id
+                idx = tab.branch_combo.findData(branch_id)
+                if idx >= 0:
+                    tab.branch_combo.blockSignals(True)
+                    tab.branch_combo.setCurrentIndex(idx)
+                    tab.branch_combo.blockSignals(False)
+        else:
+            for tab in (self.open_tab, self.history_tab):
+                tab.current_branch_id = None
+                tab.branch_combo.blockSignals(True)
+                tab.branch_combo.setCurrentIndex(0)  # "Todas las sucursales"
+                tab.branch_combo.blockSignals(False)
+        self.current_branch_id = branch_id if mode == MODE_BRANCH else None
+
+    def _on_operation_mode_changed(self, mode: str, branch_id):
+        """Callback fired by the operation_mode singleton on every mode change.
+
+        Re-applies the branch filter scope and reloads both tabs so the
+        new mode takes effect immediately.
+        """
+        self.apply_operation_mode(mode, branch_id)
+        self.load_data()
+
+    def load_data(self):
+        """Reload data in both tabs (called on mode change and externally).
+
+        Generic alias used by ``MainWindow.refresh_current_view()`` and
+        ``_on_mode_changed()``.  Distinct from ``refresh()`` which also
+        performs the "old resolved alerts" cleanup on the history tab.
+        """
+        self.open_tab.load_data()
+        self.history_tab.load_data()
+
+    def closeEvent(self, event):
+        """Unsubscribe from operation-mode changes when the widget is destroyed."""
+        operation_mode.unsubscribe(self._on_operation_mode_changed)
+        super().closeEvent(event)

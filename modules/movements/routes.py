@@ -654,6 +654,16 @@ class MovementListView(QWidget):
         else:
             # Matrix mode — free branch filter
             self.branch_combo.setEnabled(True)
+
+            # Reset the branch filter to "all branches" so the matrix view
+            # actually shows movements from every branch — without this,
+            # the previous branch-mode value of self.current_branch_id would
+            # leak through load_movements() and keep scoping to one branch.
+            self.current_branch_id = None
+            self.branch_combo.blockSignals(True)
+            self.branch_combo.setCurrentIndex(0)  # "Todas las sucursales"
+            self.branch_combo.blockSignals(False)
+
             self.mode_label.setText("🌐 Modo: Matriz")
             self.mode_label.setStyleSheet(
                 "font-size: 12px; font-weight: bold; padding: 4px 8px; "

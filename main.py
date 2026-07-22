@@ -386,7 +386,6 @@ class MainWindow(QMainWindow):
         self.user = user
         self.db = db
         self.handlers = []
-        self._syncing_combo = False
         self.setup_ui()
         self.setup_handlers()
         self.setWindowTitle(f"{APP_TITLE} - v{APP_VERSION}")
@@ -786,48 +785,51 @@ class MainWindow(QMainWindow):
             self._set_branch_mode(branch_id, branch_name)
 
     def _set_matrix_mode(self):
-        """Switch to matrix (global) mode."""
-        self._syncing_combo = True
-        try:
-            operation_mode.set_matrix_mode()
-            # Sync combo selection back to Matrix (index 0)
-            self.mode_combo.blockSignals(True)
-            self.mode_combo.setCurrentIndex(0)
-            self.mode_combo.blockSignals(False)
-        finally:
-            self._syncing_combo = False
+        """Switch to matrix (global) mode.
+
+        The toolbar combo is *not* touched here — the singleton notification
+        flows back through ``_on_mode_changed`` which is the single owner of
+        the UI state.
+        """
+        operation_mode.set_matrix_mode()
 
     def _set_branch_mode(self, branch_id: int, branch_name: str):
-        """Switch to branch mode for the given branch."""
-        self._syncing_combo = True
+        """Switch to branch mode for the given branch.
+
+        The toolbar combo is *not* touched here — the singleton notification
+        flows back through ``_on_mode_changed`` which is the single owner of
+        the UI state.
+        """
         try:
             operation_mode.set_branch_mode(branch_id, branch_name)
-            # Sync combo to the selected branch
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo cambiar el modo: {e}")
+
+    def _on_mode_changed(self, mode: str, branch_id):
+        """Callback fired by operation_mode singleton on every mode change.
+
+        This is the single owner of the toolbar-mode combo and the place
+        that refreshes every view after a mode switch.  Setters in
+        ``_set_matrix_mode`` / ``_set_branch_mode`` only mutate the
+        singleton; they do not touch the UI.
+        """
+        label = operation_mode.label()
+
+        # ── Sync the toolbar combo to the current mode ─────────────────
+        if mode == MODE_BRANCH and branch_id:
             idx = self.mode_combo.findData(branch_id)
             if idx >= 0:
                 self.mode_combo.blockSignals(True)
                 self.mode_combo.setCurrentIndex(idx)
                 self.mode_combo.blockSignals(False)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"No se pudo cambiar el modo: {e}")
-        finally:
-            self._syncing_combo = False
-
-    def _on_mode_changed(self, mode: str, branch_id):
-        """Callback fired by operation_mode singleton on every mode change.
-
-        Updates the toolbar indicator label and the window status bar.
-        Refreshes the inventory and movements views immediately.
-        """
-        # Avoid re-entrancy during programmatic combo synchronization
-        if self._syncing_combo:
-            return
-
-        label = operation_mode.label()
+        else:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentIndex(0)
+            self.mode_combo.blockSignals(False)
 
         # Update toolbar indicator
         self.mode_status_label.setText(label)
-        if mode == "branch":
+        if mode == MODE_BRANCH:
             self.mode_status_label.setStyleSheet(
                 "font-weight: bold; padding: 4px 10px; border-radius: 4px; "
                 "background: #e3f2fd; color: #0d47a1;"
@@ -842,6 +844,31 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Usuario: {self.user.name}  |  {label}"
         )
+
+        # ── Refresh every view so the new scope is applied immediately ─
+        # Coexists with refresh_current_view() — the manual F5 / button
+        # only reloads the visible tab, while this path reloads everything
+        # that has already been built.
+        if hasattr(self, 'inventory_view'):
+            self.inventory_view.load_data()
+        if hasattr(self, 'movements_view'):
+            self.movements_view.load_movements()
+        if hasattr(self, 'alerts_view'):
+            self.alerts_view.load_data()
+        if hasattr(self, 'dashboard_view'):
+            self.dashboard_view.load_data()
+        if hasattr(self, 'products_view'):
+            self.products_view.load_products()
+        if hasattr(self, 'branches_view'):
+            self.branches_view.load_branches()
+        if hasattr(self, 'history_view'):
+            self.history_view.load_data()
+        if hasattr(self, 'reports_view'):
+            self.reports_view.load_data()
+        if hasattr(self, 'communication_view'):
+            self.communication_view.load_data()
+        if hasattr(self, 'users_view'):
+            self.users_view.load_users()
 
         logger.info(f"Operation mode changed: {label}")
 

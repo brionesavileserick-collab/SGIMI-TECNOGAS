@@ -1058,6 +1058,15 @@ class InventoryListView(QWidget):
             self.branch_combo.setEnabled(True)
             self.global_view_btn.setVisible(True)
 
+            # Reset the branch filter to "all branches" so the matrix view
+            # actually shows data from every branch — without this, the
+            # previous branch-mode value of self.current_branch_id would
+            # leak through load_inventory() and keep scoping to one branch.
+            self.current_branch_id = None
+            self.branch_combo.blockSignals(True)
+            self.branch_combo.setCurrentIndex(0)  # "Todas las sucursales"
+            self.branch_combo.blockSignals(False)
+
             self.mode_label.setText("🌐 Modo: Matriz")
             self.mode_label.setStyleSheet(
                 "font-size: 12px; font-weight: bold; padding: 4px 8px; "
@@ -1256,7 +1265,13 @@ class InventoryListView(QWidget):
 
     # Alias para el refresh genérico de MainWindow
     def load_data(self):
-        self.load_inventory(self.search_input.text() or None)
+        # Mirror the behaviour of _on_refresh_timeout: respect the
+        # "Vista Global" toggle so the caller's intent (per-branch rows
+        # vs. aggregated) is preserved across mode changes.
+        if not self.global_view_btn.isChecked():
+            self.load_inventory(self.search_input.text() or None)
+        else:
+            self.load_global_inventory(self.search_input.text() or None)
 
     # ── Handlers de filtros ───────────────────────────────────────────────
     def on_branch_changed(self, _):
