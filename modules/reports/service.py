@@ -64,6 +64,13 @@ def _flatten_dict(d: Dict, parent_key: str = "", sep: str = ".") -> Dict:
     return dict(items)
 
 
+def _fmt_date_readable(dt: Optional[datetime]) -> Optional[str]:
+    """Format datetime to readable format (DD/MM/YYYY HH:MM)."""
+    if dt is None:
+        return None
+    return dt.strftime("%d/%m/%Y %H:%M")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Service class
 # ══════════════════════════════════════════════════════════════════════════════
@@ -120,6 +127,39 @@ class ReportsService:
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Could not ensure report_schedules table: %s", exc)
 
+    def _get_branch_name(self, branch_id: Optional[int]) -> str:
+        """Resolve branch_id to branch name."""
+        if branch_id is None:
+            return "Todas las sucursales"
+        try:
+            from models.branch import Branch
+            branch = self.db.query(Branch).filter(Branch.id == branch_id).first()
+            return branch.name if branch else f"Sucursal #{branch_id}"
+        except Exception:
+            return f"Sucursal #{branch_id}"
+
+    def _get_product_name(self, product_id: Optional[int]) -> str:
+        """Resolve product_id to product name."""
+        if product_id is None:
+            return "Todos los productos"
+        try:
+            from models.product import Product
+            product = self.db.query(Product).filter(Product.id == product_id).first()
+            return product.name if product else f"Producto #{product_id}"
+        except Exception:
+            return f"Producto #{product_id}"
+
+    def _get_user_name(self, user_id: Optional[int]) -> str:
+        """Resolve user_id to user name."""
+        if user_id is None:
+            return "Todos los usuarios"
+        try:
+            from models.user import User
+            user = self.db.query(User).filter(User.id == user_id).first()
+            return user.name if user else f"Usuario #{user_id}"
+        except Exception:
+            return f"Usuario #{user_id}"
+
     # ─────────────────────────────────────────────────────────────────────────
     # EXP 1-3 · REPORTES BASE (con filtros extendidos)
     # ─────────────────────────────────────────────────────────────────────────
@@ -131,15 +171,17 @@ class ReportsService:
         date_from: Optional[datetime] = None,    # Exp 1 (para last_count_date)
         date_to: Optional[datetime] = None,      # Exp 1
     ) -> Dict[str, Any]:
-        """Generate inventory status report."""
+        """Generate inventory status report with enhanced details."""
         from models.inventory import Inventory
         from models.product import Product
         from models.branch import Branch
+        from models.category import Category
 
         query = (
             self.db.query(Inventory)
             .join(Product)
             .join(Branch)
+            .outerjoin(Category, Product.category_id == Category.id)
             .filter(
                 Inventory.is_active == True,
                 Product.is_active == True,
@@ -161,21 +203,29 @@ class ReportsService:
             "generated_at": _fmt_date(datetime.utcnow()),
             "filters": {
                 "branch_id": branch_id,
+                "branch_name": self._get_branch_name(branch_id),
                 "product_id": product_id,
+                "product_name": self._get_product_name(product_id),
                 "date_from": _fmt_date(date_from),
                 "date_to": _fmt_date(date_to),
             },
             "total_items": len(items),
             "total_physical_stock": 0,
             "total_digital_stock": 0,
+            "total_value": 0.0,
             "discrepancies": [],
             "low_stock": [],
             "by_branch": {},
+            "by_category": {},
         }
 
         for item in items:
             report["total_physical_stock"] += item.physical_stock
             report["total_digital_stock"] += item.digital_stock
+            
+            unit_price = getattr(item.product, 'cost_price', 0) or 0
+            item_value = item.digital_stock * unit_price
+            report["total_value"] += item_value
 
             branch_name = item.branch.name
             if branch_name not in report["by_branch"]:
@@ -183,26 +233,43 @@ class ReportsService:
                     "items": 0,
                     "physical_stock": 0,
                     "digital_stock": 0,
+                    "value": 0.0,
                 }
             report["by_branch"][branch_name]["items"] += 1
             report["by_branch"][branch_name]["physical_stock"] += item.physical_stock
             report["by_branch"][branch_name]["digital_stock"] += item.digital_stock
+            report["by_branch"][branch_name]["value"] += item_value
+
+            category_name = item.product.category.name if item.product and item.product.category else "Sin categoría"
+            if category_name not in report["by_category"]:
+                report["by_category"][category_name] = {
+                    "items": 0,
+                    "digital_stock": 0,
+                    "value": 0.0,
+                }
+            report["by_category"][category_name]["items"] += 1
+            report["by_category"][category_name]["digital_stock"] += item.digital_stock
+            report["by_category"][category_name]["value"] += item_value
 
             if item.has_discrepancy:
                 report["discrepancies"].append({
                     "product": item.product.name,
+                    "sku": item.product.sku if item.product else "—",
                     "branch": branch_name,
                     "physical": item.physical_stock,
                     "digital": item.digital_stock,
                     "difference": item.difference,
+                    "percentage": round((abs(item.difference) / max(item.digital_stock, 1)) * 100, 2),
                 })
 
             if item.is_low_stock:
                 report["low_stock"].append({
                     "product": item.product.name,
+                    "sku": item.product.sku if item.product else "—",
                     "branch": branch_name,
                     "current": item.digital_stock,
                     "min": item.min_stock,
+                    "unit_price": unit_price,
                 })
 
         return report
@@ -216,10 +283,18 @@ class ReportsService:
         date_from: Optional[datetime] = None,    # Exp 1
         date_to: Optional[datetime] = None,      # Exp 1
     ) -> Dict[str, Any]:
-        """Generate movement history report."""
+        """Generate movement history report with enhanced details."""
         from models.movement import Movement
+        from models.product import Product
+        from models.branch import Branch
+        from models.user import User
 
-        query = self.db.query(Movement)
+        query = (
+            self.db.query(Movement)
+            .join(Product, Movement.product_id == Product.id)
+            .join(Branch, Movement.branch_id == Branch.id)
+            .join(User, Movement.user_id == User.id)
+        )
 
         if branch_id:
             query = query.filter(
@@ -237,21 +312,27 @@ class ReportsService:
         if date_to:
             query = query.filter(Movement.created_at <= date_to)
 
-        movements = query.all()
+        movements = query.order_by(Movement.created_at.desc()).all()
 
         report: Dict[str, Any] = {
             "generated_at": _fmt_date(datetime.utcnow()),
             "filters": {
                 "branch_id": branch_id,
+                "branch_name": self._get_branch_name(branch_id),
                 "product_id": product_id,
+                "product_name": self._get_product_name(product_id),
                 "user_id": user_id,
+                "user_name": self._get_user_name(user_id),
                 "date_from": _fmt_date(date_from),
                 "date_to": _fmt_date(date_to),
             },
             "total_movements": len(movements),
+            "total_quantity": 0,
             "by_type": {},
             "by_state": {},
             "by_branch": {},
+            "by_day_of_week": {},
+            "movements": [],
         }
 
         for m in movements:
@@ -259,14 +340,38 @@ class ReportsService:
             report["by_type"].setdefault(mtype, {"count": 0, "total_quantity": 0})
             report["by_type"][mtype]["count"] += 1
             report["by_type"][mtype]["total_quantity"] += m.quantity
+            report["total_quantity"] += m.quantity
 
             state = m.state
             report["by_state"][state] = report["by_state"].get(state, 0) + 1
 
-            b_key = str(m.branch_id)
+            branch_name = m.branch.name if m.branch else "Desconocido"
+            b_key = branch_name
             report["by_branch"].setdefault(b_key, {"movements": 0, "quantity": 0})
             report["by_branch"][b_key]["movements"] += 1
             report["by_branch"][b_key]["quantity"] += m.quantity
+
+            if m.created_at:
+                day_name = m.created_at.strftime("%A")
+                report["by_day_of_week"][day_name] = report["by_day_of_week"].get(day_name, 0) + 1
+
+            destination_branch_name = "—"
+            if m.destination_branch_id:
+                dest_branch = self.db.query(Branch).filter(Branch.id == m.destination_branch_id).first()
+                destination_branch_name = dest_branch.name if dest_branch else "Desconocido"
+
+            report["movements"].append({
+                "id": m.id,
+                "date": _fmt_date_readable(m.created_at),
+                "product": m.product.name if m.product else "Desconocido",
+                "sku": m.product.sku if m.product else "—",
+                "quantity": m.quantity,
+                "type": m.movement_type,
+                "state": m.state,
+                "origin_branch": branch_name,
+                "destination_branch": destination_branch_name,
+                "user": m.user.name if m.user else "Desconocido",
+            })
 
         return report
 
@@ -1560,14 +1665,30 @@ class ReportsService:
             "abc_analysis": "Análisis ABC y Dead Stock",
         }
         h1(TITLES.get(report_type, "Reporte"))
-        kv("Generado en:", report_data.get("generated_at", "—"), indent=2)
+        generated_at = report_data.get("generated_at", "—")
+        if generated_at and generated_at != "—":
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+                kv("Generado en:", _fmt_date_readable(dt), indent=2)
+            except Exception:
+                kv("Generado en:", generated_at, indent=2)
+        else:
+            kv("Generado en:", generated_at, indent=2)
 
         filters = report_data.get("filters", {})
         if any(v for v in filters.values()):
             h2("Filtros aplicados")
             for k, v in filters.items():
-                if v is not None:
-                    kv(k + ":", v)
+                if v is not None and v != "—":
+                    label = k.replace("_", " ").replace("id", "ID").replace("name", "Nombre").title()
+                    if k.endswith("_name") and k.replace("_name", "_id") in filters:
+                        continue
+                    if k.endswith("_id") and k.replace("_id", "_name") in filters:
+                        continue
+                    if k.endswith("_id"):
+                        continue
+                    kv(label + ":", v)
 
         # ── Inventario ────────────────────────────────────────────────────────
         if report_type == "inventory":
@@ -1575,25 +1696,54 @@ class ReportsService:
             kv("Total artículos:", report_data.get("total_items", 0))
             kv("Stock físico total:", report_data.get("total_physical_stock", 0))
             kv("Stock digital total:", report_data.get("total_digital_stock", 0))
+            total_value = report_data.get("total_value", 0)
+            if total_value:
+                kv("Valor total inventario:", f"${total_value:,.2f}")
             if report_data.get("by_branch"):
                 h2("Por sucursal")
-                tbl_rows = [
-                    [b, v["items"], v["physical_stock"], v["digital_stock"]]
-                    for b, v in report_data["by_branch"].items()
-                ]
-                table(["Sucursal", "Artículos", "Físico", "Digital"], tbl_rows)
+                tbl_rows = []
+                for b, v in report_data["by_branch"].items():
+                    row = [b, v["items"], v["physical_stock"], v["digital_stock"]]
+                    if "value" in v:
+                        row.append(f"${v['value']:,.2f}")
+                    tbl_rows.append(row)
+                headers = ["Sucursal", "Artículos", "Físico", "Digital"]
+                if "value" in list(report_data["by_branch"].values())[0]:
+                    headers.append("Valor")
+                table(headers, tbl_rows)
+            if report_data.get("by_category"):
+                h2("Por categoría")
+                table(
+                    ["Categoría", "Artículos", "Stock", "Valor"],
+                    [[c, v["items"], v["digital_stock"], f"${v['value']:,.2f}"]
+                     for c, v in report_data["by_category"].items()],
+                )
+            if report_data.get("discrepancies"):
+                h2(f"Discrepancias ({len(report_data['discrepancies'])} ítems)")
+                table(
+                    ["Producto", "SKU", "Sucursal", "Físico", "Digital", "Diferencia", "%"],
+                    [[i["product"], i["sku"], i["branch"],
+                      i["physical"], i["digital"], i["difference"], f"{i['percentage']}%"]
+                     for i in report_data["discrepancies"][:50]],
+                )
             if report_data.get("low_stock"):
                 h2(f"Stock bajo ({len(report_data['low_stock'])} artículos)")
-                table(
-                    ["Producto", "Sucursal", "Actual", "Mínimo"],
-                    [[i["product"], i["branch"], i["current"], i["min"]]
-                     for i in report_data["low_stock"]],
-                )
+                low_stock_rows = []
+                for i in report_data["low_stock"]:
+                    row = [i["product"], i["sku"], i["branch"], i["current"], i["min"]]
+                    if "unit_price" in i:
+                        row.append(f"${i['unit_price']:.2f}")
+                    low_stock_rows.append(row)
+                headers = ["Producto", "SKU", "Sucursal", "Actual", "Mínimo"]
+                if report_data["low_stock"] and "unit_price" in report_data["low_stock"][0]:
+                    headers.append("Costo")
+                table(headers, low_stock_rows)
 
         # ── Movimientos ───────────────────────────────────────────────────────
         elif report_type == "movements":
             h2("Resumen")
             kv("Total movimientos:", report_data.get("total_movements", 0))
+            kv("Total unidades movidas:", report_data.get("total_quantity", 0))
             if report_data.get("by_type"):
                 h2("Por tipo")
                 table(
@@ -1607,6 +1757,29 @@ class ReportsService:
                     ["Estado", "Cantidad"],
                     [[s, c] for s, c in report_data["by_state"].items()],
                 )
+            if report_data.get("by_branch"):
+                h2("Por sucursal")
+                table(
+                    ["Sucursal", "Movimientos", "Unidades"],
+                    [[b, v["movements"], v["quantity"]]
+                     for b, v in report_data["by_branch"].items()],
+                )
+            if report_data.get("by_day_of_week"):
+                h2("Por día de la semana")
+                table(
+                    ["Día", "Movimientos"],
+                    [[d, c] for d, c in report_data["by_day_of_week"].items()],
+                )
+            if report_data.get("movements"):
+                h2(f"Detalle de movimientos (primeros {min(len(report_data['movements']), 100)})")
+                table(
+                    ["Fecha", "Producto", "SKU", "Cantidad", "Tipo", "Estado", "Origen", "Destino", "Usuario"],
+                    [[m["date"], m["product"], m["sku"], m["quantity"], m["type"], m["state"],
+                      m["origin_branch"], m["destination_branch"], m["user"]]
+                     for m in report_data["movements"][:100]],
+                )
+                if len(report_data["movements"]) > 100:
+                    lines.append(f"\n  … y {len(report_data['movements']) - 100} movimientos más (exporta a CSV/Excel para verlos todos)")
 
         # ── Discrepancias ─────────────────────────────────────────────────────
         elif report_type == "discrepancies":
