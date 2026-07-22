@@ -78,6 +78,9 @@ class AlertHandlers:
         event_bus.subscribe(settings.Events.BRANCH_CAPACITY_EXCEEDED, self.handle_branch_capacity_warning)
         event_bus.subscribe(settings.Events.BATCH_EXPIRING, self.handle_batch_expiring)
 
+        # Product deletion handler
+        event_bus.subscribe(settings.Events.PRODUCT_DELETED, self.handle_product_deleted)
+
     # ------------------------------------------------------------------ #
     # Original handlers (unchanged logic)                                 #
     # ------------------------------------------------------------------ #
@@ -135,6 +138,36 @@ class AlertHandlers:
                 alert_type="transfer_pending",
                 movement_id=movement_id,
             )
+
+    def handle_product_deleted(self, data: Dict[str, Any]):
+        """
+        Handle product.deleted event.
+        Resolve all alerts associated with the deleted product.
+        """
+        try:
+            product_id = data.get("product_id")
+            if not product_id:
+                return
+
+            # Resolve all alerts for this product (all types, all branches)
+            from models.alert import Alert
+            alerts = self.db.query(Alert).filter(
+                Alert.product_id == product_id,
+                Alert.is_resolved == False
+            ).all()
+
+            resolved_count = 0
+            for alert in alerts:
+                alert.is_resolved = True
+                alert.resolved_at = None  # No timestamp for automatic resolution
+                resolved_count += 1
+
+            if resolved_count > 0:
+                self.db.commit()
+                logger.info(f"Resolved {resolved_count} alerts for deleted product {product_id}")
+
+        except Exception as e:
+            logger.error(f"Error handling product.deleted for alerts: {e}")
 
     # ------------------------------------------------------------------ #
     # New handlers                                                         #

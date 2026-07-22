@@ -189,8 +189,11 @@ class ProductRepository:
             raise
 
     def sku_exists(self, sku: str, exclude_id: int = None) -> bool:
-        """Check if SKU already exists."""
-        query = self.db.query(Product).filter(Product.sku == sku)
+        """Check if SKU already exists (only active products)."""
+        query = self.db.query(Product).filter(
+            Product.sku == sku,
+            Product.is_active == True
+        )
         if exclude_id:
             query = query.filter(Product.id != exclude_id)
         return query.first() is not None
