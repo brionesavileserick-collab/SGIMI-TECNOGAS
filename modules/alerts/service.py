@@ -79,6 +79,12 @@ class Alert(Base):
     is_expired_flag = Column(Boolean, default=False)
 
     # ------------------------------------------------------------------
+    # Suppression system
+    # ------------------------------------------------------------------
+    suppressed_until = Column(DateTime(timezone=True), nullable=True, index=True)
+    suppression_reason = Column(Text, nullable=True)
+
+    # ------------------------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
         """Convert alert to dictionary (all fields, new ones included)."""
         return {
@@ -102,6 +108,8 @@ class Alert(Base):
             "priority": self.priority,
             "due_date": self.due_date.isoformat() if self.due_date else None,
             "is_expired_flag": self.is_expired_flag,
+            "suppressed_until": self.suppressed_until.isoformat() if self.suppressed_until else None,
+            "suppression_reason": self.suppression_reason,
         }
 
 
@@ -187,7 +195,7 @@ class AlertService:
         self._ensure_alert_schema()
 
     def _ensure_alert_schema(self):
-        """Ensure the alerts table has the optional group_key column for new alerts."""
+        """Ensure the alerts table has the optional group_key column, unique index, and suppression fields."""
         if not self.db or not self.db.bind:
             return
         try:
@@ -198,6 +206,25 @@ class AlertService:
             if "group_key" not in columns:
                 self.db.execute(text("ALTER TABLE alerts ADD COLUMN group_key VARCHAR(100)"))
                 logger.info("Added group_key column to alerts table")
+
+            # Add suppression fields
+            if "suppressed_until" not in columns:
+                self.db.execute(text("ALTER TABLE alerts ADD COLUMN suppressed_until DATETIME"))
+                logger.info("Added suppressed_until column to alerts table")
+            if "suppression_reason" not in columns:
+                self.db.execute(text("ALTER TABLE alerts ADD COLUMN suppression_reason TEXT"))
+                logger.info("Added suppression_reason column to alerts table")
+
+            # Add unique index for preventing duplicate active alerts
+            indexes = {idx["name"] for idx in inspector.get_indexes("alerts")}
+            if "idx_unique_active_alert" not in indexes:
+                # SQLite doesn't support partial indexes with WHERE, so we create a regular unique index
+                # The application logic already handles the is_resolved check
+                self.db.execute(text("""
+                    CREATE UNIQUE INDEX idx_unique_active_alert
+                    ON alerts(alert_type, product_id, branch_id, movement_id)
+                """))
+                logger.info("Added unique index for active alerts")
             self.db.commit()
         except Exception as exc:
             logger.warning(f"Could not ensure alerts schema: {exc}")
@@ -212,7 +239,32 @@ class AlertService:
                      priority: str = "normal", due_date: datetime = None,
                      assigned_to: int = None,
                      group_key: Optional[str] = None) -> Dict[str, Any]:
-        """Create a new alert."""
+        """Create a new alert with reference validation."""
+        # Validate product_id exists and is active
+        if product_id is not None:
+            from models.product import Product
+            product = self.db.query(Product).filter(Product.id == product_id).first()
+            if not product:
+                raise ValueError(f"Product with id {product_id} does not exist")
+            if not product.is_active:
+                raise ValueError(f"Product with id {product_id} is not active")
+
+        # Validate branch_id exists and is active
+        if branch_id is not None:
+            from models.branch import Branch
+            branch = self.db.query(Branch).filter(Branch.id == branch_id).first()
+            if not branch:
+                raise ValueError(f"Branch with id {branch_id} does not exist")
+            if not branch.is_active:
+                raise ValueError(f"Branch with id {branch_id} is not active")
+
+        # Validate movement_id exists
+        if movement_id is not None:
+            from models.movement import Movement
+            movement = self.db.query(Movement).filter(Movement.id == movement_id).first()
+            if not movement:
+                raise ValueError(f"Movement with id {movement_id} does not exist")
+
         alert = Alert(
             alert_type=alert_type,
             severity=severity,
@@ -254,6 +306,37 @@ class AlertService:
             "title": payload.get("title", ""),
             "message": payload.get("message", ""),
         }
+
+    def add_custom_template(self, alert_type: str, title: str, message: str) -> bool:
+        """Add or update a custom alert template."""
+        self._ALERT_TEMPLATES[alert_type] = {
+            "title": title,
+            "message": message,
+        }
+        logger.info(f"Added custom template for alert type: {alert_type}")
+        return True
+
+    def get_available_templates(self) -> Dict[str, Dict[str, str]]:
+        """Get all available alert templates."""
+        return self._ALERT_TEMPLATES.copy()
+
+    def remove_template(self, alert_type: str) -> bool:
+        """Remove a custom template (only if it's not a core template)."""
+        core_templates = {
+            "low_stock", "discrepancy", "stock_critical", "transfer_rejected",
+            "transfer_pending", "count_overdue", "count_due_soon",
+            "approval_pending_admin", "approval_pending_manager",
+            "capacity_warning", "capacity_critical", "capacity_exceeded",
+            "batch_expiring_urgent", "batch_expiring_warning",
+        }
+        if alert_type in core_templates:
+            logger.warning(f"Cannot remove core template: {alert_type}")
+            return False
+        if alert_type in self._ALERT_TEMPLATES:
+            del self._ALERT_TEMPLATES[alert_type]
+            logger.info(f"Removed custom template: {alert_type}")
+            return True
+        return False
 
     def create_count_overdue_alert(self, branch_id: int, scheduled_date: Any, session_id: int = None) -> Optional[Dict[str, Any]]:
         """Create a count-overdue or due-soon alert when a scheduled count is stale."""
@@ -548,6 +631,298 @@ class AlertService:
         self.db.commit()
         logger.info(f"Cleared {count} old alerts")
         return count
+
+    # ------------------------------------------------------------------ #
+    # Suppression system methods
+    # ------------------------------------------------------------------ #
+
+    def suppress_alert(self, alert_id: int, until: datetime, reason: str = None) -> bool:
+        """Suppress an alert until a specific datetime."""
+        alert = self.db.query(Alert).filter(Alert.id == alert_id).first()
+        if not alert:
+            return False
+        alert.suppressed_until = until
+        alert.suppression_reason = reason
+        self.db.commit()
+        logger.info(f"Alert {alert_id} suppressed until {until}")
+        return True
+
+    def unsuppress_alert(self, alert_id: int) -> bool:
+        """Remove suppression from an alert."""
+        alert = self.db.query(Alert).filter(Alert.id == alert_id).first()
+        if not alert:
+            return False
+        alert.suppressed_until = None
+        alert.suppression_reason = None
+        self.db.commit()
+        logger.info(f"Alert {alert_id} unsuppressed")
+        return True
+
+    def get_suppressed_alerts(self) -> List[Dict[str, Any]]:
+        """Get all currently suppressed alerts."""
+        now = datetime.now(timezone.utc)
+        alerts = self.db.query(Alert).filter(
+            Alert.suppressed_until.isnot(None),
+            Alert.suppressed_until > now,
+            Alert.is_resolved == False,
+        ).all()
+        return [a.to_dict() for a in alerts]
+
+    def check_expired_suppressions(self) -> int:
+        """Check and remove expired suppressions, returning count of reactivated alerts."""
+        now = datetime.now(timezone.utc)
+        alerts = self.db.query(Alert).filter(
+            Alert.suppressed_until.isnot(None),
+            Alert.suppressed_until <= now,
+            Alert.is_resolved == False,
+        ).all()
+        count = len(alerts)
+        for alert in alerts:
+            alert.suppressed_until = None
+            alert.suppression_reason = None
+        if count > 0:
+            self.db.commit()
+            logger.info(f"Reactivated {count} alerts with expired suppressions")
+        return count
+
+    # ------------------------------------------------------------------ #
+    # Snooze system with context
+    # ------------------------------------------------------------------ #
+
+    def snooze_alert(self, alert_id: int, until: datetime, context: str = None,
+                    changed_by: str = None) -> bool:
+        """Snooze an alert with context (reason for snoozing)."""
+        alert = self.db.query(Alert).filter(Alert.id == alert_id).first()
+        if not alert:
+            return False
+
+        old_suppressed = alert.suppressed_until
+        alert.suppressed_until = until
+        alert.suppression_reason = context
+
+        # Log the change
+        self._log_alert_change(
+            alert_id=alert_id,
+            field_name="suppressed_until",
+            old_value=old_suppressed,
+            new_value=until,
+            changed_by=changed_by,
+            change_reason=f"Snoozed: {context}" if context else "Snoozed"
+        )
+
+        self.db.commit()
+        logger.info(f"Alert {alert_id} snoozed until {until} with context: {context}")
+        return True
+
+    def snooze_alert_for_duration(self, alert_id: int, minutes: int = 60,
+                                 context: str = None, changed_by: str = None) -> bool:
+        """Snooze an alert for a specific duration in minutes."""
+        until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+        return self.snooze_alert(alert_id, until, context, changed_by)
+
+    def get_snoozed_alerts(self) -> List[Dict[str, Any]]:
+        """Get all currently snoozed alerts (same as suppressed, with context)."""
+        return self.get_suppressed_alerts()
+
+    # ------------------------------------------------------------------ #
+    # Auto-resolution based on conditions
+    # ------------------------------------------------------------------ #
+
+    def check_and_auto_resolve_alerts(self) -> int:
+        """Check active alerts and resolve those whose conditions are no longer met."""
+        resolved_count = 0
+
+        # Check low_stock alerts
+        low_stock_alerts = self.db.query(Alert).filter(
+            Alert.alert_type == "low_stock",
+            Alert.is_resolved == False,
+            Alert.product_id.isnot(None),
+            Alert.branch_id.isnot(None),
+        ).all()
+
+        for alert in low_stock_alerts:
+            from models.inventory import Inventory
+            inventory = self.db.query(Inventory).filter(
+                Inventory.product_id == alert.product_id,
+                Inventory.branch_id == alert.branch_id,
+            ).first()
+            if inventory and inventory.physical_stock >= (inventory.min_stock or 0):
+                alert.is_resolved = True
+                alert.resolved_at = datetime.now(timezone.utc)
+                resolved_count += 1
+
+        # Check discrepancy alerts
+        discrepancy_alerts = self.db.query(Alert).filter(
+            Alert.alert_type == "discrepancy",
+            Alert.is_resolved == False,
+            Alert.product_id.isnot(None),
+            Alert.branch_id.isnot(None),
+        ).all()
+
+        for alert in discrepancy_alerts:
+            from models.inventory import Inventory
+            inventory = self.db.query(Inventory).filter(
+                Inventory.product_id == alert.product_id,
+                Inventory.branch_id == alert.branch_id,
+            ).first()
+            if inventory and inventory.physical_stock == inventory.digital_stock:
+                alert.is_resolved = True
+                alert.resolved_at = datetime.now(timezone.utc)
+                resolved_count += 1
+
+        if resolved_count > 0:
+            self.db.commit()
+            logger.info(f"Auto-resolved {resolved_count} alerts based on current conditions")
+        return resolved_count
+
+    # ------------------------------------------------------------------ #
+    # Alert grouping system
+    # ------------------------------------------------------------------ #
+
+    def get_grouped_alerts(self, alert_type: str = None, branch_id: int = None) -> List[Dict[str, Any]]:
+        """Get alerts grouped by type and branch for summary view."""
+        query = self.db.query(Alert).filter(
+            Alert.is_resolved == False,
+            Alert.suppressed_until.is_(None),
+        )
+
+        if alert_type:
+            query = query.filter(Alert.alert_type == alert_type)
+        if branch_id:
+            query = query.filter(Alert.branch_id == branch_id)
+
+        alerts = query.all()
+
+        # Group by (alert_type, branch_id)
+        groups = {}
+        for alert in alerts:
+            key = (alert.alert_type, alert.branch_id)
+            if key not in groups:
+                groups[key] = {
+                    "alert_type": alert.alert_type,
+                    "branch_id": alert.branch_id,
+                    "branch_name": self.get_branch_name(alert.branch_id),
+                    "count": 0,
+                    "severity": alert.severity,
+                    "oldest_created": alert.created_at,
+                    "alert_ids": [],
+                }
+            groups[key]["count"] += 1
+            groups[key]["alert_ids"].append(alert.id)
+            if alert.created_at < groups[key]["oldest_created"]:
+                groups[key]["oldest_created"] = alert.created_at
+
+        return list(groups.values())
+
+    def get_alerts_for_group(self, alert_type: str, branch_id: int) -> List[Dict[str, Any]]:
+        """Get all individual alerts for a specific group."""
+        alerts = self.db.query(Alert).filter(
+            Alert.alert_type == alert_type,
+            Alert.branch_id == branch_id,
+            Alert.is_resolved == False,
+            Alert.suppressed_until.is_(None),
+        ).all()
+        return [a.to_dict() for a in alerts]
+
+    # ------------------------------------------------------------------ #
+    # Alert history tracking
+    # ------------------------------------------------------------------ #
+
+    def _log_alert_change(self, alert_id: int, field_name: str, old_value, new_value,
+                         changed_by: str = None, change_reason: str = None):
+        """Log a change to an alert for audit trail."""
+        try:
+            from models.alert_history import AlertHistory
+            history = AlertHistory(
+                alert_id=alert_id,
+                field_name=field_name,
+                old_value=str(old_value) if old_value is not None else None,
+                new_value=str(new_value) if new_value is not None else None,
+                changed_by=changed_by,
+                change_reason=change_reason,
+            )
+            self.db.add(history)
+            self.db.commit()
+        except Exception as e:
+            logger.warning(f"Could not log alert change: {e}")
+
+    def log_alert_changes(self, alert_id: int, changes: Dict[str, tuple],
+                         changed_by: str = None, change_reason: str = None):
+        """Log multiple changes to an alert."""
+        for field_name, (old_val, new_val) in changes.items():
+            self._log_alert_change(alert_id, field_name, old_val, new_val, changed_by, change_reason)
+
+    def get_alert_history(self, alert_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get change history for a specific alert."""
+        from models.alert_history import AlertHistory
+        history = self.db.query(AlertHistory).filter(
+            AlertHistory.alert_id == alert_id
+        ).order_by(AlertHistory.changed_at.desc()).limit(limit).all()
+        return [h.to_dict() for h in history]
+
+    # ------------------------------------------------------------------ #
+    # Integrity validation job
+    # ------------------------------------------------------------------ #
+
+    def validate_alert_integrity(self) -> Dict[str, int]:
+        """Validate alert integrity and fix orphaned alerts. Returns statistics."""
+        stats = {
+            "orphaned_product_alerts_resolved": 0,
+            "orphaned_branch_alerts_resolved": 0,
+            "orphaned_movement_alerts_resolved": 0,
+            "total_fixed": 0,
+        }
+
+        # Check alerts with product_id that doesn't exist or is inactive
+        from models.product import Product
+        orphaned_product_alerts = self.db.query(Alert).filter(
+            Alert.product_id.isnot(None),
+            Alert.is_resolved == False
+        ).all()
+
+        for alert in orphaned_product_alerts:
+            product = self.db.query(Product).filter(Product.id == alert.product_id).first()
+            if not product or not product.is_active:
+                alert.is_resolved = True
+                alert.resolved_at = datetime.now(timezone.utc)
+                stats["orphaned_product_alerts_resolved"] += 1
+                stats["total_fixed"] += 1
+
+        # Check alerts with branch_id that doesn't exist or is inactive
+        from models.branch import Branch
+        orphaned_branch_alerts = self.db.query(Alert).filter(
+            Alert.branch_id.isnot(None),
+            Alert.is_resolved == False
+        ).all()
+
+        for alert in orphaned_branch_alerts:
+            branch = self.db.query(Branch).filter(Branch.id == alert.branch_id).first()
+            if not branch or not branch.is_active:
+                alert.is_resolved = True
+                alert.resolved_at = datetime.now(timezone.utc)
+                stats["orphaned_branch_alerts_resolved"] += 1
+                stats["total_fixed"] += 1
+
+        # Check alerts with movement_id that doesn't exist
+        from models.movement import Movement
+        orphaned_movement_alerts = self.db.query(Alert).filter(
+            Alert.movement_id.isnot(None),
+            Alert.is_resolved == False
+        ).all()
+
+        for alert in orphaned_movement_alerts:
+            movement = self.db.query(Movement).filter(Movement.id == alert.movement_id).first()
+            if not movement:
+                alert.is_resolved = True
+                alert.resolved_at = datetime.now(timezone.utc)
+                stats["orphaned_movement_alerts_resolved"] += 1
+                stats["total_fixed"] += 1
+
+        if stats["total_fixed"] > 0:
+            self.db.commit()
+            logger.info(f"Integrity validation fixed {stats['total_fixed']} orphaned alerts: {stats}")
+
+        return stats
 
     # ------------------------------------------------------------------ #
     # Exp 1 – Nombres legibles                                            #
