@@ -6,7 +6,6 @@ Provides publish/subscribe pattern for decoupled module communication.
 from typing import Callable, Dict, List, Any
 from collections import defaultdict, deque
 import logging
-import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -54,28 +53,17 @@ class EventBus:
             event: Event name to emit
             data: Data to pass to handlers
         """
-        # Generate unique event_id for this specific emission
-        event_id = str(uuid.uuid4())
-        
-        # Add event_id to data if data is a dict
-        if isinstance(data, dict):
-            data_with_id = data.copy()
-            data_with_id["_event_id"] = event_id
-        else:
-            data_with_id = {"_event_id": event_id, "value": data}
-        
         event_record = {
             "event": event,
-            "data": data_with_id,
-            "event_id": event_id
+            "data": data,
         }
         self._event_history.append(event_record)
-        logger.info(f"Event emitted: {event} (event_id: {event_id})")
+        logger.info(f"Event emitted: {event}")
 
         handlers = self._handlers.get(event, [])
         for handler in handlers:
             try:
-                handler(data_with_id)
+                handler(data)
             except Exception as e:
                 logger.error(f"Error in handler {handler.__name__} for event {event}: {e}")
 

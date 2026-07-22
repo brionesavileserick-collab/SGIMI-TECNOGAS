@@ -93,33 +93,30 @@ class AlertHandlers:
             inventory_id  = data.get("inventory_id")
             digital_stock = data.get("digital_stock")
             physical_stock = data.get("physical_stock")
-            event_id      = data.get("_event_id")  # Unique ID for this specific event emission
 
             if not all([product_id, branch_id]):
                 return
 
             if data.get("is_low_stock"):
                 self._create_low_stock_alert(
-                    product_id, branch_id, digital_stock, data.get("min_stock", 0), event_id
+                    product_id, branch_id, digital_stock, data.get("min_stock", 0)
                 )
             else:
                 self.service.resolve_open_alert(
                     alert_type="low_stock",
                     product_id=product_id,
                     branch_id=branch_id,
-                    event_id=event_id,
                 )
 
             if data.get("has_discrepancy"):
                 self._create_discrepancy_alert(
-                    product_id, branch_id, physical_stock, digital_stock, event_id
+                    product_id, branch_id, physical_stock, digital_stock
                 )
             else:
                 self.service.resolve_open_alert(
                     alert_type="discrepancy",
                     product_id=product_id,
                     branch_id=branch_id,
-                    event_id=event_id,
                 )
 
         except Exception as e:
@@ -367,10 +364,10 @@ class AlertHandlers:
     # ------------------------------------------------------------------ #
 
     def _create_low_stock_alert(self, product_id: int, branch_id: int,
-                                current_stock: int, min_stock: int, event_id: str = None):
+                                current_stock: int, min_stock: int):
         """Create low-stock alert if none exists yet for this specific event."""
         existing = self.service.get_open_alert(
-            alert_type="low_stock", product_id=product_id, branch_id=branch_id, event_id=event_id
+            alert_type="low_stock", product_id=product_id, branch_id=branch_id
         )
         if existing:
             return
@@ -385,15 +382,14 @@ class AlertHandlers:
             ),
             product_id=product_id,
             branch_id=branch_id,
-            event_id=event_id,
         )
         self._emit_and_notify(alert_data)
 
     def _create_discrepancy_alert(self, product_id: int, branch_id: int,
-                                  physical_stock: int, digital_stock: int, event_id: str = None):
+                                  physical_stock: int, digital_stock: int):
         """Create discrepancy alert if none exists yet for this specific event."""
         existing = self.service.get_open_alert(
-            alert_type="discrepancy", product_id=product_id, branch_id=branch_id, event_id=event_id
+            alert_type="discrepancy", product_id=product_id, branch_id=branch_id
         )
         if existing:
             return
@@ -410,7 +406,6 @@ class AlertHandlers:
             message=message_data.get("message", f"Diferencia detectada: Físico={physical_stock}, Digital={digital_stock}, Diferencia={difference}"),
             product_id=product_id,
             branch_id=branch_id,
-            event_id=event_id,
         )
         self._emit_and_notify(alert_data)
 

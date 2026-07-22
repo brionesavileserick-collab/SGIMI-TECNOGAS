@@ -53,7 +53,6 @@ class Alert(Base):
     is_read = Column(Boolean, default=False)
     is_resolved = Column(Boolean, default=False)
     group_key = Column(String(100), nullable=True, index=True)
-    event_id = Column(String(100), nullable=True, index=True)  # Unique identifier for the event/occurrence
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     resolved_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -95,7 +94,6 @@ class Alert(Base):
             "is_read": self.is_read,
             "is_resolved": self.is_resolved,
             "group_key": self.group_key,
-            "event_id": self.event_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
             # Expansions
@@ -189,7 +187,7 @@ class AlertService:
         self._ensure_alert_schema()
 
     def _ensure_alert_schema(self):
-        """Ensure the alerts table has the optional group_key and event_id columns for new alerts."""
+        """Ensure the alerts table has the optional group_key column for new alerts."""
         if not self.db or not self.db.bind:
             return
         try:
@@ -200,10 +198,6 @@ class AlertService:
             if "group_key" not in columns:
                 self.db.execute(text("ALTER TABLE alerts ADD COLUMN group_key VARCHAR(100)"))
                 logger.info("Added group_key column to alerts table")
-            if "event_id" not in columns:
-                self.db.execute(text("ALTER TABLE alerts ADD COLUMN event_id VARCHAR(100)"))
-                self.db.execute(text("CREATE INDEX IF NOT EXISTS idx_alerts_event_id ON alerts(event_id)"))
-                logger.info("Added event_id column to alerts table")
             self.db.commit()
         except Exception as exc:
             logger.warning(f"Could not ensure alerts schema: {exc}")
@@ -217,8 +211,7 @@ class AlertService:
                      branch_id: int = None, movement_id: int = None,
                      priority: str = "normal", due_date: datetime = None,
                      assigned_to: int = None,
-                     group_key: Optional[str] = None,
-                     event_id: Optional[str] = None) -> Dict[str, Any]:
+                     group_key: Optional[str] = None) -> Dict[str, Any]:
         """Create a new alert."""
         alert = Alert(
             alert_type=alert_type,
@@ -232,7 +225,6 @@ class AlertService:
             due_date=due_date,
             assigned_to=assigned_to,
             group_key=group_key,
-            event_id=event_id,
         )
         self.db.add(alert)
         self.db.commit()
@@ -433,22 +425,12 @@ class AlertService:
     def get_open_alert(self, alert_type: str, product_id: int = None,
                        branch_id: int = None,
                        movement_id: int = None,
-                       group_key: Optional[str] = None,
-                       event_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get an existing unresolved alert for the same operational condition.
-        When event_id is provided, searches for any alert (resolved or not) with that event_id
-        to prevent duplicate alerts for the same event occurrence."""
+                       group_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get an existing unresolved alert for the same operational condition."""
         query = self.db.query(Alert).filter(
             Alert.alert_type == alert_type,
+            Alert.is_resolved == False,
         )
-        
-        # When event_id is provided, search for any alert (resolved or not) with that event_id
-        # This prevents creating duplicate alerts for the same event occurrence
-        if event_id is not None:
-            query = query.filter(Alert.event_id == event_id)
-        else:
-            # Without event_id, only search for unresolved alerts (legacy behavior)
-            query = query.filter(Alert.is_resolved == False)
         
         if product_id is None:
             query = query.filter(Alert.product_id.is_(None))
@@ -470,46 +452,6 @@ class AlertService:
 
         alert = query.order_by(Alert.created_at.desc()).first()
         return alert.to_dict() if alert else None
-
-    def resolve_legacy_alerts(self, alert_type: str, product_id: int = None,
-                             branch_id: int = None,
-                             movement_id: int = None,
-                             group_key: Optional[str] = None) -> int:
-        """Resolve old alerts (event_id is NULL) for the same condition when creating a new alert with event_id."""
-        query = self.db.query(Alert).filter(
-            Alert.alert_type == alert_type,
-            Alert.is_resolved == False,
-            Alert.event_id.is_(None),
-        )
-        if product_id is None:
-            query = query.filter(Alert.product_id.is_(None))
-        else:
-            query = query.filter(Alert.product_id == product_id)
-
-        if branch_id is None:
-            query = query.filter(Alert.branch_id.is_(None))
-        else:
-            query = query.filter(Alert.branch_id == branch_id)
-
-        if movement_id is None:
-            query = query.filter(Alert.movement_id.is_(None))
-        else:
-            query = query.filter(Alert.movement_id == movement_id)
-
-        if group_key is not None:
-            query = query.filter(Alert.group_key == group_key)
-
-        alerts = query.all()
-        resolved_count = 0
-        for alert in alerts:
-            alert.is_resolved = True
-            alert.resolved_at = datetime.now(timezone.utc)
-            resolved_count += 1
-
-        if resolved_count > 0:
-            self.db.commit()
-            logger.info(f"Resolved {resolved_count} legacy alerts for {alert_type}")
-        return resolved_count
 
     def get_alert(self, alert_id: int) -> Optional[Dict[str, Any]]:
         """Get alert by ID."""
@@ -565,10 +507,9 @@ class AlertService:
 
     def resolve_open_alert(self, alert_type: str, product_id: int = None,
                            branch_id: int = None,
-                           movement_id: int = None,
-                           event_id: Optional[str] = None) -> bool:
+                           movement_id: int = None) -> bool:
         """Resolve an existing unresolved alert for the same operational condition."""
-        alert = self.get_open_alert(alert_type, product_id, branch_id, movement_id, event_id=event_id)
+        alert = self.get_open_alert(alert_type, product_id, branch_id, movement_id)
         if not alert:
             return False
         return self.resolve_alert(alert["id"])
