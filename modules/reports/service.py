@@ -71,6 +71,17 @@ def _fmt_date_readable(dt: Optional[datetime]) -> Optional[str]:
     return dt.strftime("%d/%m/%Y %H:%M")
 
 
+def _fmt_date_iso_to_readable(iso_date: Optional[str]) -> str:
+    """Convert ISO date string to readable format."""
+    if not iso_date or iso_date == "—":
+        return "—"
+    try:
+        dt = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
+        return _fmt_date_readable(dt)
+    except Exception:
+        return iso_date
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Service class
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1643,6 +1654,21 @@ class ReportsService:
                 )
             lines.append(sep)
 
+        def alert(text: str, indent: int = 4) -> None:
+            lines.append(f"{' ' * indent}⚠ {text}")
+
+        def insight(text: str, indent: int = 4) -> None:
+            lines.append(f"{' ' * indent}💡 {text}")
+
+        def success(text: str, indent: int = 4) -> None:
+            lines.append(f"{' ' * indent}✅ {text}")
+
+        def warning(text: str, indent: int = 4) -> None:
+            lines.append(f"{' ' * indent}🟡 {text}")
+
+        def critical(text: str, indent: int = 4) -> None:
+            lines.append(f"{' ' * indent}🔴 {text}")
+
         TITLES = {
             "inventory": "Reporte de Inventario",
             "movements": "Reporte de Movimientos",
@@ -1692,13 +1718,48 @@ class ReportsService:
 
         # ── Inventario ────────────────────────────────────────────────────────
         if report_type == "inventory":
-            h2("Resumen")
-            kv("Total artículos:", report_data.get("total_items", 0))
-            kv("Stock físico total:", report_data.get("total_physical_stock", 0))
-            kv("Stock digital total:", report_data.get("total_digital_stock", 0))
+            total_items = report_data.get("total_items", 0)
+            total_physical = report_data.get("total_physical_stock", 0)
+            total_digital = report_data.get("total_digital_stock", 0)
             total_value = report_data.get("total_value", 0)
+            discrepancies = report_data.get("discrepancies", [])
+            low_stock = report_data.get("low_stock", [])
+            
+            h2("Resumen Ejecutivo")
+            if total_items > 0:
+                discrepancy_count = len(discrepancies)
+                discrepancy_pct = (discrepancy_count / total_items * 100) if total_items > 0 else 0
+                low_stock_count = len(low_stock)
+                low_stock_pct = (low_stock_count / total_items * 100) if total_items > 0 else 0
+                avg_value_per_item = (total_value / total_items) if total_items > 0 else 0
+                
+                lines.append(f"    Inventario total: {total_items} artículos, {total_digital} unidades.")
+                if total_value > 0:
+                    lines.append(f"    Valor total: ${total_value:,.2f} (promedio: ${avg_value_per_item:.2f} por artículo).")
+                
+                if discrepancy_count == 0:
+                    success("No hay discrepancias en el inventario")
+                elif discrepancy_pct < 5:
+                    warning(f"{discrepancy_count} artículos con discrepancia ({discrepancy_pct:.1f}% del total)")
+                else:
+                    critical(f"{discrepancy_count} artículos con discrepancia ({discrepancy_pct:.1f}% del total) - Requiere revisión urgente")
+                
+                if low_stock_count == 0:
+                    success("Todos los productos tienen stock adecuado")
+                elif low_stock_pct < 10:
+                    warning(f"{low_stock_count} productos con stock bajo ({low_stock_pct:.1f}% del total)")
+                else:
+                    critical(f"{low_stock_count} productos con stock bajo ({low_stock_pct:.1f}% del total) - Requiere reposición urgente")
+            else:
+                lines.append("    No hay artículos en inventario.")
+            
+            h2("Resumen")
+            kv("Total artículos:", total_items)
+            kv("Stock físico total:", total_physical)
+            kv("Stock digital total:", total_digital)
             if total_value:
                 kv("Valor total inventario:", f"${total_value:,.2f}")
+            
             if report_data.get("by_branch"):
                 h2("Por sucursal")
                 tbl_rows = []
@@ -1711,6 +1772,7 @@ class ReportsService:
                 if "value" in list(report_data["by_branch"].values())[0]:
                     headers.append("Valor")
                 table(headers, tbl_rows)
+            
             if report_data.get("by_category"):
                 h2("Por categoría")
                 table(
@@ -1718,45 +1780,71 @@ class ReportsService:
                     [[c, v["items"], v["digital_stock"], f"${v['value']:,.2f}"]
                      for c, v in report_data["by_category"].items()],
                 )
-            if report_data.get("discrepancies"):
-                h2(f"Discrepancias ({len(report_data['discrepancies'])} ítems)")
+            
+            if discrepancies:
+                h2(f"⚠ Discrepancias ({len(discrepancies)} ítems)")
                 table(
                     ["Producto", "SKU", "Sucursal", "Físico", "Digital", "Diferencia", "%"],
                     [[i["product"], i["sku"], i["branch"],
                       i["physical"], i["digital"], i["difference"], f"{i['percentage']}%"]
-                     for i in report_data["discrepancies"][:50]],
+                     for i in discrepancies[:50]],
                 )
-            if report_data.get("low_stock"):
-                h2(f"Stock bajo ({len(report_data['low_stock'])} artículos)")
+            
+            if low_stock:
+                h2(f"🟡 Stock bajo ({len(low_stock)} artículos)")
                 low_stock_rows = []
-                for i in report_data["low_stock"]:
+                for i in low_stock:
                     row = [i["product"], i["sku"], i["branch"], i["current"], i["min"]]
                     if "unit_price" in i:
                         row.append(f"${i['unit_price']:.2f}")
                     low_stock_rows.append(row)
                 headers = ["Producto", "SKU", "Sucursal", "Actual", "Mínimo"]
-                if report_data["low_stock"] and "unit_price" in report_data["low_stock"][0]:
+                if low_stock and "unit_price" in low_stock[0]:
                     headers.append("Costo")
                 table(headers, low_stock_rows)
 
         # ── Movimientos ───────────────────────────────────────────────────────
         elif report_type == "movements":
+            total_movements = report_data.get("total_movements", 0)
+            total_quantity = report_data.get("total_quantity", 0)
+            by_state = report_data.get("by_state", {})
+            by_type = report_data.get("by_type", {})
+            
+            h2("Resumen Ejecutivo")
+            if total_movements > 0:
+                avg_per_movement = total_quantity / total_movements if total_movements > 0 else 0
+                validated_count = by_state.get("validado", 0)
+                validated_pct = (validated_count / total_movements * 100) if total_movements > 0 else 0
+                lines.append(f"    Se registraron {total_movements} movimientos con {total_quantity} unidades.")
+                lines.append(f"    Promedio: {avg_per_movement:.1f} unidades por movimiento.")
+                if validated_pct == 100:
+                    success(f"Todos los movimientos están validados ({validated_count}/{total_movements})")
+                elif validated_pct >= 80:
+                    success(f"{validated_pct:.0f}% de movimientos validados ({validated_count}/{total_movements})")
+                else:
+                    warning(f"Solo {validated_pct:.0f}% de movimientos validados ({validated_count}/{total_movements})")
+            else:
+                lines.append("    No se registraron movimientos en el período.")
+            
             h2("Resumen")
-            kv("Total movimientos:", report_data.get("total_movements", 0))
-            kv("Total unidades movidas:", report_data.get("total_quantity", 0))
-            if report_data.get("by_type"):
+            kv("Total movimientos:", total_movements)
+            kv("Total unidades movidas:", total_quantity)
+            
+            if by_type:
                 h2("Por tipo")
                 table(
                     ["Tipo", "Cantidad", "Unidades"],
                     [[t, v["count"], v["total_quantity"]]
-                     for t, v in report_data["by_type"].items()],
+                     for t, v in by_type.items()],
                 )
-            if report_data.get("by_state"):
+            
+            if by_state:
                 h2("Por estado")
                 table(
                     ["Estado", "Cantidad"],
-                    [[s, c] for s, c in report_data["by_state"].items()],
+                    [[s, c] for s, c in by_state.items()],
                 )
+            
             if report_data.get("by_branch"):
                 h2("Por sucursal")
                 table(
@@ -1764,12 +1852,21 @@ class ReportsService:
                     [[b, v["movements"], v["quantity"]]
                      for b, v in report_data["by_branch"].items()],
                 )
+            
             if report_data.get("by_day_of_week"):
                 h2("Por día de la semana")
                 table(
                     ["Día", "Movimientos"],
                     [[d, c] for d, c in report_data["by_day_of_week"].items()],
                 )
+            
+            h2("⚠ Puntos de Atención")
+            pending = by_state.get("pendiente", 0)
+            if pending > 0:
+                alert(f"{pending} movimientos pendientes de validación requieren atención")
+            else:
+                success("No hay movimientos pendientes de validación")
+            
             if report_data.get("movements"):
                 h2(f"Detalle de movimientos (primeros {min(len(report_data['movements']), 100)})")
                 table(
@@ -1800,27 +1897,79 @@ class ReportsService:
 
         # ── KPIs ──────────────────────────────────────────────────────────────
         elif report_type == "kpis":
+            h2("Resumen Ejecutivo")
+            kpis = report_data.get("kpis", {})
+            metrics = report_data.get("metrics", {})
+            
+            if kpis:
+                lines.append("    Indicadores de rendimiento del inventario:")
+                for k, v in kpis.items():
+                    if k == "eri":
+                        if v >= 0.8:
+                            success(f"ERI (Eficiencia de Rotación de Inventario): {v:.2f} (óptimo: ≥0.80)")
+                        elif v >= 0.6:
+                            warning(f"ERI (Eficiencia de Rotación de Inventario): {v:.2f} (aceptable: ≥0.60, óptimo: ≥0.80)")
+                        else:
+                            critical(f"ERI (Eficiencia de Rotación de Inventario): {v:.2f} (crítico: <0.60) - Requiere atención")
+                    elif k == "eru":
+                        if v >= 0.85:
+                            success(f"ERU (Eficiencia de Reabastecimiento): {v:.2f} (óptimo: ≥0.85)")
+                        elif v >= 0.70:
+                            warning(f"ERU (Eficiencia de Reabastecimiento): {v:.2f} (aceptable: ≥0.70, óptimo: ≥0.85)")
+                        else:
+                            critical(f"ERU (Eficiencia de Reabastecimiento): {v:.2f} (crítico: <0.70) - Requiere atención")
+            
             h2("KPIs")
-            for k, v in report_data.get("kpis", {}).items():
+            for k, v in kpis.items():
                 kv(k.upper() + ":", f"{v:.2f}" if isinstance(v, float) else v)
             h2("Métricas")
-            for k, v in report_data.get("metrics", {}).items():
+            for k, v in metrics.items():
                 kv(k + ":", v)
 
         # ── Top productos ─────────────────────────────────────────────────────
         elif report_type == "top_products":
             h2("Resumen")
-            kv("Métrica:", report_data.get("metric", "—"))
-            kv("Límite:", report_data.get("limit", "—"))
-            if report_data.get("products"):
+            metric = report_data.get("metric", "—")
+            limit = report_data.get("limit", "—")
+            products = report_data.get("products", [])
+            
+            kv("Métrica:", metric)
+            kv("Límite:", limit)
+            
+            if products:
+                h2("Resumen Ejecutivo")
+                lines.append(f"    Top {len(products)} productos según métrica: {metric}.")
+                if "total_quantity" in products[0]:
+                    top_quantity = sum(p.get("total_quantity", 0) for p in products)
+                    lines.append(f"    Estos productos representan un volumen significativo de actividad.")
+                insight("Revisar estos productos para optimizar gestión de inventario y promociones")
+                
                 h2("Ranking")
-                first = report_data["products"][0]
+                first = products[0]
                 hdrs = list(first.keys())
-                table(hdrs, [[p.get(h) for h in hdrs] for p in report_data["products"]])
+                table(hdrs, [[p.get(h) for h in hdrs] for p in products])
 
         # ── Eficiencia por sucursal ────────────────────────────────────────────
         elif report_type == "branch_efficiency":
-            if report_data.get("branches"):
+            branches = report_data.get("branches", [])
+            if branches:
+                h2("Resumen Ejecutivo")
+                lines.append(f"    Análisis de eficiencia operativa para {len(branches)} sucursales.")
+                
+                high_rejection = [b for b in branches if b.get("rejection_rate", 0) > 15]
+                high_discrepancy = [b for b in branches if b.get("discrepancy_rate", 0) > 10]
+                slow_validation = [b for b in branches if b.get("avg_validation_days", 0) > 3]
+                
+                if high_rejection:
+                    critical(f"{len(high_rejection)} sucursales con tasa de rechazo >15%: {', '.join(b['branch'] for b in high_rejection)}")
+                if high_discrepancy:
+                    critical(f"{len(high_discrepancy)} sucursales con alta discrepancia >10%: {', '.join(b['branch'] for b in high_discrepancy)}")
+                if slow_validation:
+                    warning(f"{len(slow_validation)} sucursales con validación lenta >3 días: {', '.join(b['branch'] for b in slow_validation)}")
+                
+                if not high_rejection and not high_discrepancy and not slow_validation:
+                    success("Todas las sucursales operan dentro de parámetros aceptables")
+                
                 h2("Eficiencia por sucursal")
                 table(
                     ["Sucursal", "Movimientos", "Tasa rechazo %",
@@ -1829,7 +1978,7 @@ class ReportsService:
                     [[b["branch"], b["total_movements"], b["rejection_rate"],
                       b["avg_validation_days"], b["transfers_sent"],
                       b["transfers_received"], b["discrepancy_rate"]]
-                     for b in report_data["branches"]],
+                     for b in branches],
                 )
 
         # ── Valor de inventario ───────────────────────────────────────────────
@@ -1854,28 +2003,65 @@ class ReportsService:
 
         # ── Transferencias ────────────────────────────────────────────────────
         elif report_type == "transfers":
+            total_transfers = report_data.get("total_transfers", 0)
+            pending_reception = report_data.get("pending_reception", 0)
+            items = report_data.get("items", [])
+            
             h2("Resumen")
-            kv("Total transferencias:", report_data.get("total_transfers", 0))
-            kv("Pendientes de recepción:", report_data.get("pending_reception", 0))
-            if report_data.get("items"):
+            kv("Total transferencias:", total_transfers)
+            kv("Pendientes de recepción:", pending_reception)
+            
+            if total_transfers > 0:
+                h2("Resumen Ejecutivo")
+                pending_pct = (pending_reception / total_transfers * 100) if total_transfers > 0 else 0
+                if pending_reception == 0:
+                    success("Todas las transferencias han sido recibidas")
+                elif pending_pct < 10:
+                    warning(f"{pending_reception} transferencias pendientes ({pending_pct:.1f}% del total)")
+                else:
+                    critical(f"{pending_reception} transferencias pendientes ({pending_pct:.1f}% del total) - Requiere seguimiento")
+            
+            if items:
                 h2("Detalle (primeras 50)")
                 table(
                     ["Producto", "Origen", "Destino", "Cantidad", "Estado", "Recibida"],
                     [[i["product"], i["origin_branch"], i["destination_branch"],
                       i["quantity"], i["state"], "Sí" if i["is_received"] else "No"]
-                     for i in report_data["items"][:50]],
+                     for i in items[:50]],
                 )
 
         # ── Tendencias ────────────────────────────────────────────────────────
         elif report_type == "trends":
+            metric = report_data.get("metric", "—")
+            periods_count = report_data.get("periods_count", "—")
+            data_points = report_data.get("data_points", [])
+            
             h2("Resumen")
-            kv("Métrica:", report_data.get("metric", "—"))
-            kv("Períodos:", report_data.get("periods_count", "—"))
-            if report_data.get("data_points"):
+            kv("Métrica:", metric)
+            kv("Períodos:", periods_count)
+            
+            if data_points and len(data_points) >= 2:
+                h2("Resumen Ejecutivo")
+                first_val = data_points[0].get("value", 0)
+                last_val = data_points[-1].get("value", 0)
+                change = last_val - first_val
+                change_pct = (change / first_val * 100) if first_val != 0 else 0
+                
+                if change > 0:
+                    lines.append(f"    Tendencia: 📈 Crecimiento del {change_pct:.1f}% ({first_val} → {last_val})")
+                elif change < 0:
+                    lines.append(f"    Tendencia: 📉 Decrecimiento del {abs(change_pct):.1f}% ({first_val} → {last_val})")
+                else:
+                    lines.append(f"    Tendencia: ➡ Estable ({first_val} → {last_val})")
+                
+                if abs(change_pct) > 20:
+                    insight(f"Variación significativa del {abs(change_pct):.1f}% - Revisar causas")
+            
+            if data_points:
                 h2("Datos")
                 table(
                     ["Período", "Valor"],
-                    [[p["period"], p["value"]] for p in report_data["data_points"]],
+                    [[p["period"], p["value"]] for p in data_points],
                 )
 
         # ── Comparación ───────────────────────────────────────────────────────
@@ -1932,7 +2118,7 @@ class ReportsService:
                 h2("Actividad diaria")
                 table(
                     ["Fecha", "Eventos"],
-                    [[d, c] for d, c in report_data["by_date"].items()],
+                    [[_fmt_date_iso_to_readable(d), c] for d, c in report_data["by_date"].items()],
                 )
 
             if report_data.get("top_entities"):
@@ -1947,7 +2133,7 @@ class ReportsService:
                 h2(f"Detalle ({len(report_data['items'])} registros)")
                 table(
                     ["ID", "Fecha", "Evento", "Tipo", "Entidad", "Usuario", "Acción"],
-                    [[i["id"], i["fecha"], i["evento"], i["tipo"],
+                    [[i["id"], _fmt_date_iso_to_readable(i["fecha"]), i["evento"], i["tipo"],
                       i["entidad"], i["usuario"], i["accion"]]
                      for i in report_data["items"][:200]],
                 )
@@ -1959,45 +2145,100 @@ class ReportsService:
 
         elif report_type == "count_sessions":
             s = report_data.get("summary", {})
+            total_sessions = s.get("total_sessions", 0)
+            completed = s.get("completed", 0)
+            
             h2("Resumen")
-            kv("Total sesiones:", s.get("total_sessions", 0))
-            kv("Completadas:", s.get("completed", 0))
+            kv("Total sesiones:", total_sessions)
+            kv("Completadas:", completed)
             kv("En progreso:", s.get("in_progress", 0))
             kv("Pendientes:", s.get("pending", 0))
             kv("Ítems contados:", s.get("total_items_counted", 0))
             kv("Discrepancias encontradas:", s.get("total_discrepancies_found", 0))
+            
+            if total_sessions > 0:
+                h2("Resumen Ejecutivo")
+                completion_rate = (completed / total_sessions * 100) if total_sessions > 0 else 0
+                lines.append(f"    Tasa de completitud: {completion_rate:.1f}% ({completed}/{total_sessions} sesiones)")
+                if completion_rate == 100:
+                    success("Todas las sesiones de conteo han sido completadas")
+                elif completion_rate >= 80:
+                    warning(f"{completion_rate:.1f}% de sesiones completadas - {s.get('in_progress', 0)} en progreso")
+                else:
+                    critical(f"Solo {completion_rate:.1f}% de sesiones completadas - Requiere atención")
+            
             if report_data.get("sessions"):
                 h2("Sesiones")
                 table(
                     ["ID", "Sucursal", "Fecha", "Estado", "Validador", "Ítems", "Discrepancias"],
-                    [[srow["session_id"], srow["branch_name"], srow["scheduled_date"], srow["status"], srow["validator_count"], srow["items_total"], srow["items_with_discrepancy"]] for srow in report_data["sessions"][:50]],
+                    [[srow["session_id"], srow["branch_name"], _fmt_date_iso_to_readable(srow["scheduled_date"]), srow["status"], srow["validator_count"], srow["items_total"], srow["items_with_discrepancy"]] for srow in report_data["sessions"][:50]],
                 )
 
         elif report_type == "approvals":
             s = report_data.get("summary", {})
+            total_requests = s.get("total_transfer_requests", 0)
+            pending_admin = s.get("pending_admin", 0)
+            pending_manager = s.get("pending_manager", 0)
+            total_pending = pending_admin + pending_manager
+            
             h2("Resumen")
-            kv("Solicitudes totales:", s.get("total_transfer_requests", 0))
-            kv("Pendientes admin:", s.get("pending_admin", 0))
-            kv("Pendientes manager:", s.get("pending_manager", 0))
+            kv("Solicitudes totales:", total_requests)
+            kv("Pendientes admin:", pending_admin)
+            kv("Pendientes manager:", pending_manager)
             kv("Aprobadas:", s.get("approved", 0))
             kv("Rechazadas:", s.get("rejected", 0))
             kv("Promedio horas aprobación:", s.get("average_approval_time_hours", 0))
+            
+            if total_requests > 0:
+                h2("Resumen Ejecutivo")
+                pending_pct = (total_pending / total_requests * 100) if total_requests > 0 else 0
+                if total_pending == 0:
+                    success("No hay solicitudes pendientes de aprobación")
+                elif pending_pct < 10:
+                    warning(f"{total_pending} solicitudes pendientes ({pending_pct:.1f}% del total)")
+                else:
+                    critical(f"{total_pending} solicitudes pendientes ({pending_pct:.1f}% del total) - Requiere atención")
+            
             if report_data.get("pending_approvals"):
                 h2("Pendientes de aprobación")
                 table(
                     ["Movimiento", "Producto", "Origen", "Destino", "Cant.", "Nivel", "Creada", "Horas espera"],
-                    [[row["movement_id"], row["product_name"], row["origin_branch"], row["destination_branch"], row["quantity"], row["approval_level"], row["created_at"], row["waiting_hours"]] for row in report_data["pending_approvals"][:20]],
+                    [[row["movement_id"], row["product_name"], row["origin_branch"], row["destination_branch"], row["quantity"], row["approval_level"], _fmt_date_iso_to_readable(row["created_at"]), row["waiting_hours"]] for row in report_data["pending_approvals"][:20]],
                 )
 
         elif report_type == "alerts":
             s = report_data.get("summary", {})
+            total_alerts = s.get("total_alerts", 0)
+            open_alerts = s.get("open_alerts", 0)
+            
             h2("Resumen")
-            kv("Total alertas:", s.get("total_alerts", 0))
-            kv("Abiertas:", s.get("open_alerts", 0))
+            kv("Total alertas:", total_alerts)
+            kv("Abiertas:", open_alerts)
             kv("Resueltas:", s.get("resolved_alerts", 0))
             kv("Promedio hrs. resolución:", s.get("average_resolution_hours", 0))
+            
+            if total_alerts > 0:
+                h2("Resumen Ejecutivo")
+                open_pct = (open_alerts / total_alerts * 100) if total_alerts > 0 else 0
+                if open_alerts == 0:
+                    success("No hay alertas abiertas")
+                elif open_pct < 20:
+                    warning(f"{open_alerts} alertas abiertas ({open_pct:.1f}% del total)")
+                else:
+                    critical(f"{open_alerts} alertas abiertas ({open_pct:.1f}% del total) - Requiere atención urgente")
+            
             if report_data.get("top_open_alerts"):
-                h2("Alertas abiertas prioritarias")
+                h2("🔴 Alertas abiertas prioritarias")
+                for row in report_data["top_open_alerts"][:10]:
+                    severity = row.get("severity", "info").lower()
+                    if severity == "critical":
+                        lines.append(f"    🔴 CRÍTICA: {row['type']} - {row['product_name']} en {row['branch_name']} ({row['hours_open']}h)")
+                    elif severity == "high":
+                        lines.append(f"    🟡 ALTA: {row['type']} - {row['product_name']} en {row['branch_name']} ({row['hours_open']}h)")
+                    else:
+                        lines.append(f"    🔵 INFO: {row['type']} - {row['product_name']} en {row['branch_name']} ({row['hours_open']}h)")
+                
+                h2("Detalle")
                 table(
                     ["ID", "Tipo", "Severidad", "Producto", "Sucursal", "Horas abiertas"],
                     [[row["alert_id"], row["type"], row["severity"], row["product_name"], row["branch_name"], row["hours_open"]] for row in report_data["top_open_alerts"][:10]],
@@ -2018,11 +2259,31 @@ class ReportsService:
             table(["ID", "Entidad", "Campo", "Anterior", "Nuevo", "Cambio por", "Fecha"], [[row["id"], row["entity_name"], row["field_name"], row["old_value"], row["new_value"], row["changed_by"], row["changed_at"]] for row in report_data.get("changes", [])[:50]])
 
         elif report_type == "batches":
+            expiring_batches = report_data.get("expiring_batches", [])
+            expired_batches = report_data.get("expired_batches", [])
+            
+            if expiring_batches:
+                h2("Resumen Ejecutivo")
+                lines.append(f"    {len(expiring_batches)} lotes próximos a vencer requieren atención.")
+                urgent = [b for b in expiring_batches if b.get("days_until_expiry", 0) <= 7]
+                if urgent:
+                    critical(f"{len(urgent)} lotes vencen en 7 días o menos - Acción inmediata requerida")
+                    insight("Considerar promociones o transferencias para mover estos productos rápidamente")
+                else:
+                    warning(f"{len(expiring_batches)} lotes próximos a vencer - Planificar acciones")
+            
             h2("Lotes próximos a vencer")
-            table(["Lote", "Producto", "Sucursal", "Vence", "Días", "Cantidad"], [[row["batch_number"], row["product_name"], row["branch_name"], row["expiration_date"], row["days_until_expiry"], row["quantity"]] for row in report_data.get("expiring_batches", [])[:20]])
-            if report_data.get("expired_batches"):
-                h2("Lotes expirados")
-                table(["Lote", "Producto", "Sucursal", "Vence", "Días", "Cantidad"], [[row["batch_number"], row["product_name"], row["branch_name"], row["expiration_date"], row["days_until_expiry"], row["quantity"]] for row in report_data["expired_batches"][:20]])
+            table(["Lote", "Producto", "Sucursal", "Vence", "Días", "Cantidad", "Acción sugerida"], 
+                  [[row["batch_number"], row["product_name"], row["branch_name"], _fmt_date_iso_to_readable(row["expiration_date"]), row["days_until_expiry"], row["quantity"], 
+                    "Promoción urgente" if row["days_until_expiry"] <= 7 else "Promoción/Transferencia"] 
+                   for row in expiring_batches[:20]])
+            
+            if expired_batches:
+                h2("🔴 Lotes expirados")
+                critical(f"{len(expired_batches)} lotes ya expirados - Revisar para disposición")
+                table(["Lote", "Producto", "Sucursal", "Vence", "Días", "Cantidad"], 
+                      [[row["batch_number"], row["product_name"], row["branch_name"], _fmt_date_iso_to_readable(row["expiration_date"]), row["days_until_expiry"], row["quantity"]] 
+                       for row in expired_batches[:20]])
 
         elif report_type == "kits":
             h2("Kits")
@@ -2032,16 +2293,36 @@ class ReportsService:
 
         elif report_type == "abc_analysis":
             s = report_data.get("summary", {})
+            class_a = s.get("class_a_count", 0)
+            class_b = s.get("class_b_count", 0)
+            class_c = s.get("class_c_count", 0)
+            dead_stock = s.get("dead_stock_count", 0)
+            total_products = class_a + class_b + class_c + dead_stock
+            
             h2("Resumen")
-            kv("Clases A:", s.get("class_a_count", 0))
-            kv("Clases B:", s.get("class_b_count", 0))
-            kv("Clases C:", s.get("class_c_count", 0))
-            kv("Dead stock:", s.get("dead_stock_count", 0))
+            kv("Clases A:", class_a)
+            kv("Clases B:", class_b)
+            kv("Clases C:", class_c)
+            kv("Dead stock:", dead_stock)
+            
+            if total_products > 0:
+                h2("Resumen Ejecutivo")
+                lines.append("    Clasificación ABC de inventario por valor de rotación:")
+                lines.append("    • Clase A: ~20% productos, ~80% valor (críticos, monitoreo continuo)")
+                lines.append("    • Clase B: ~30% productos, ~15% valor (importantes, revisión periódica)")
+                lines.append("    • Clase C: ~50% productos, ~5% valor (menor prioridad, control básico)")
+                
+                if dead_stock > 0:
+                    dead_pct = (dead_stock / total_products * 100) if total_products > 0 else 0
+                    critical(f"{dead_stock} productos sin movimiento ({dead_pct:.1f}% del total) - Revisar para liquidación")
+                    insight("Considerar promociones de liquidación para dead stock")
+            
             if report_data.get("class_a_products"):
-                h2("Productos clase A")
+                h2("🔴 Productos clase A (críticos)")
                 table(["Producto", "SKU", "Valor total", "% total"], [[item["product_name"], item["sku"], f"${item['total_value']:,.2f}", item["percent_of_total"]] for item in report_data["class_a_products"][:20]])
+            
             if report_data.get("dead_stock"):
-                h2("Dead stock")
+                h2("🟡 Dead stock (sin movimiento)")
                 table(["Producto", "SKU", "Días sin movimiento", "Stock actual"], [[item["product_name"], item["sku"], item["days_without_movement"], item["current_stock"]] for item in report_data["dead_stock"][:20]])
 
         return "\n".join(lines)
