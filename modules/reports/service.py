@@ -1685,6 +1685,21 @@ class ReportsService:
         def critical(text: str, indent: int = 4) -> None:
             lines.append(f"{' ' * indent}🔴 {text}")
 
+        def recommendation(text: str, indent: int = 4) -> None:
+            lines.append(f"{' ' * indent}▶ {text}")
+
+        def metric_card(label: str, value: str, status: str = "neutral", indent: int = 4) -> None:
+            """Display a metric with visual status indicator."""
+            icons = {"good": "🟢", "warning": "🟡", "critical": "🔴", "neutral": "⚪"}
+            icon = icons.get(status, "⚪")
+            lines.append(f"{' ' * indent}{icon} {label:<28} {value}")
+
+        def executive_summary(text: str) -> None:
+            lines.append(f"\n  ┌─ RESUMEN EJECUTIVO {'─' * 50}┐")
+            for line in text.strip().split('\n'):
+                lines.append(f"  │ {line}")
+            lines.append(f"  └{'─' * 70}┘")
+
         TITLES = {
             "inventory": "Reporte de Inventario",
             "movements": "Reporte de Movimientos",
@@ -1732,7 +1747,7 @@ class ReportsService:
                         continue
                     kv(label + ":", v)
 
-        # ── Inventario ────────────────────────────────────────────────────────
+# ── Inventario ────────────────────────────────────────────────────────
         if report_type == "inventory":
             total_items = report_data.get("total_items", 0)
             total_physical = report_data.get("total_physical_stock", 0)
@@ -1741,33 +1756,68 @@ class ReportsService:
             discrepancies = report_data.get("discrepancies", [])
             low_stock = report_data.get("low_stock", [])
             
-            h2("Resumen Ejecutivo")
+            discrepancy_count = len(discrepancies)
+            low_stock_count = len(low_stock)
+            discrepancy_pct = (discrepancy_count / total_items * 100) if total_items > 0 else 0
+            low_stock_pct = (low_stock_count / total_items * 100) if total_items > 0 else 0
+            avg_value_per_item = (total_value / total_items) if total_items > 0 else 0
+            
+            # Executive Summary
+            exec_lines = []
             if total_items > 0:
-                discrepancy_count = len(discrepancies)
-                discrepancy_pct = (discrepancy_count / total_items * 100) if total_items > 0 else 0
-                low_stock_count = len(low_stock)
-                low_stock_pct = (low_stock_count / total_items * 100) if total_items > 0 else 0
-                avg_value_per_item = (total_value / total_items) if total_items > 0 else 0
-                
-                lines.append(f"    Inventario total: {total_items} artículos, {total_digital} unidades.")
+                exec_lines.append(f"Inventario total: {total_items} artículos únicos, {total_digital:,} unidades en stock digital.")
                 if total_value > 0:
-                    lines.append(f"    Valor total: ${total_value:,.2f} (promedio: ${avg_value_per_item:.2f} por artículo).")
+                    exec_lines.append(f"Valor total de inventario: ${total_value:,.2f} (promedio ${avg_value_per_item:.2f}/artículo).")
                 
+                # Discrepancy assessment
                 if discrepancy_count == 0:
-                    success("No hay discrepancias en el inventario")
+                    exec_lines.append("✅ Integridad de inventario: SIN discrepancias detectadas.")
                 elif discrepancy_pct < 5:
-                    warning(f"{discrepancy_count} artículos con discrepancia ({discrepancy_pct:.1f}% del total)")
+                    exec_lines.append(f"⚠️  {discrepancy_count} artículos con discrepancia ({discrepancy_pct:.1f}%) - Tolerable, monitorear.")
                 else:
-                    critical(f"{discrepancy_count} artículos con discrepancia ({discrepancy_pct:.1f}% del total) - Requiere revisión urgente")
+                    exec_lines.append(f"🔴 {discrepancy_count} artículos con discrepancia ({discrepancy_pct:.1f}%) - Requiere investigación inmediata.")
                 
+                # Low stock assessment
                 if low_stock_count == 0:
-                    success("Todos los productos tienen stock adecuado")
+                    exec_lines.append("✅ Niveles de stock: TODOS los productos por encima de mínimos.")
                 elif low_stock_pct < 10:
-                    warning(f"{low_stock_count} productos con stock bajo ({low_stock_pct:.1f}% del total)")
+                    exec_lines.append(f"⚠️  {low_stock_count} productos bajo mínimo ({low_stock_pct:.1f}%) - Planear reposición.")
                 else:
-                    critical(f"{low_stock_count} productos con stock bajo ({low_stock_pct:.1f}% del total) - Requiere reposición urgente")
+                    exec_lines.append(f"🔴 {low_stock_count} productos bajo mínimo ({low_stock_pct:.1f}%) - REPOSICIÓN URGENTE.")
             else:
-                lines.append("    No hay artículos en inventario.")
+                exec_lines.append("No hay artículos en inventario para el período/filtros seleccionados.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Key Metrics Dashboard
+            h2("📊 Indicadores Clave")
+            metric_card("Artículos únicos", f"{total_items:,}")
+            metric_card("Stock físico total", f"{total_physical:,}")
+            metric_card("Stock digital total", f"{total_digital:,}")
+            if total_value:
+                metric_card("Valor total inventario", f"${total_value:,.2f}")
+            metric_card("Discrepancias", f"{discrepancy_count} ({discrepancy_pct:.1f}%)", 
+                       "good" if discrepancy_pct == 0 else ("warning" if discrepancy_pct < 5 else "critical"))
+            metric_card("Stock bajo mínimo", f"{low_stock_count} ({low_stock_pct:.1f}%)",
+                       "good" if low_stock_pct == 0 else ("warning" if low_stock_pct < 10 else "critical"))
+            
+            # Recommendations
+            recommendations = []
+            if discrepancy_count > 0:
+                top_disc = max(discrepancies, key=lambda x: x.get('impact_value', 0)) if discrepancies else None
+                if top_disc:
+                    recommendations.append(f"Investigar discrepancia mayor: {top_disc['product']} ({top_disc['branch']}) - Impacto: ${top_disc.get('impact_value', 0):,.2f}")
+            if low_stock_count > 0:
+                recommendations.append(f"Generar órdenes de compra para {low_stock_count} productos bajo mínimo")
+            if discrepancy_pct > 5:
+                recommendations.append("Programar conteo físico completo en sucursales con mayor discrepancia")
+            if total_value > 0 and avg_value_per_item > 1000:
+                recommendations.append("Revisar cobertura de seguro para inventario de alto valor")
+            
+            if recommendations:
+                h2("🎯 Recomendaciones")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
             
             h2("Resumen")
             kv("Total artículos:", total_items)
@@ -1792,9 +1842,9 @@ class ReportsService:
             if report_data.get("by_category"):
                 h2("Por categoría")
                 table(
-["Categoría", "Artículos", "Stock", "Valor"],
+                    ["Categoría", "Artículos", "Stock", "Valor"],
                     [[c, v["items"], v["digital_stock"], f"${v['value']:,.2f}"]
-                      for c, v in report_data["by_category"].items()],
+                     for c, v in report_data["by_category"].items()],
                 )
             
             if discrepancies:
@@ -1820,33 +1870,82 @@ class ReportsService:
                     headers.append("Costo")
                 table(headers, low_stock_rows)
 
-        # ── Movimientos ───────────────────────────────────────────────────────
+# ── Movimientos ───────────────────────────────────────────────────────
         elif report_type == "movements":
             total_movements = report_data.get("total_movements", 0)
             total_quantity = report_data.get("total_quantity", 0)
             by_state = report_data.get("by_state", {})
             by_type = report_data.get("by_type", {})
             
-            h2("Resumen Ejecutivo")
+            validated_count = by_state.get("validado", 0)
+            pending_count = by_state.get("pendiente", 0)
+            rejected_count = by_state.get("rechazado", 0)
+            validated_pct = (validated_count / total_movements * 100) if total_movements > 0 else 0
+            pending_pct = (pending_count / total_movements * 100) if total_movements > 0 else 0
+            rejected_pct = (rejected_count / total_movements * 100) if total_movements > 0 else 0
+            avg_per_movement = total_quantity / total_movements if total_movements > 0 else 0
+            total_cost = report_data.get("total_cost", 0)
+            
+            # Executive Summary
+            exec_lines = []
             if total_movements > 0:
-                avg_per_movement = total_quantity / total_movements if total_movements > 0 else 0
-                validated_count = by_state.get("validado", 0)
-                validated_pct = (validated_count / total_movements * 100) if total_movements > 0 else 0
-                lines.append(f"    Se registraron {total_movements} movimientos con {total_quantity} unidades.")
-                lines.append(f"    Promedio: {avg_per_movement:.1f} unidades por movimiento.")
+                exec_lines.append(f"Se registraron {total_movements:,} movimientos con {total_quantity:,} unidades totales.")
+                exec_lines.append(f"Promedio: {avg_per_movement:.1f} unidades por movimiento.")
+                if total_cost > 0:
+                    exec_lines.append(f"Costo total de movimientos: ${total_cost:,.2f}.")
+                
+                # Validation status
                 if validated_pct == 100:
-                    success(f"Todos los movimientos están validados ({validated_count}/{total_movements})")
+                    exec_lines.append("✅ Validación: TODOS los movimientos están validados.")
                 elif validated_pct >= 80:
-                    success(f"{validated_pct:.0f}% de movimientos validados ({validated_count}/{total_movements})")
+                    exec_lines.append(f"✅ Validación: {validated_pct:.0f}% validados ({validated_count}/{total_movements}) - Buena cobertura.")
+                elif validated_pct >= 50:
+                    exec_lines.append(f"⚠️  Validación: {validated_pct:.0f}% validados ({validated_count}/{total_movements}) - Revisar pendientes.")
                 else:
-                    warning(f"Solo {validated_pct:.0f}% de movimientos validados ({validated_count}/{total_movements})")
+                    exec_lines.append(f"🔴 Validación: Solo {validated_pct:.0f}% validados ({validated_count}/{total_movements}) - CRÍTICO.")
+                
+                # Pending/Rejected assessment
+                if pending_count > 0:
+                    exec_lines.append(f"⏳ {pending_count} movimientos pendientes ({pending_pct:.1f}%) requieren atención.")
+                if rejected_count > 0:
+                    exec_lines.append(f"❌ {rejected_count} movimientos rechazados ({rejected_pct:.1f}%) - Analizar causas.")
             else:
-                lines.append("    No se registraron movimientos en el período.")
+                exec_lines.append("No se registraron movimientos en el período seleccionado.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Key Metrics Dashboard
+            h2("📊 Indicadores Clave")
+            metric_card("Total movimientos", f"{total_movements:,}")
+            metric_card("Total unidades", f"{total_quantity:,}")
+            if total_cost:
+                metric_card("Costo total", f"${total_cost:,.2f}")
+            metric_card("Validados", f"{validated_count} ({validated_pct:.1f}%)", 
+                       "good" if validated_pct >= 80 else ("warning" if validated_pct >= 50 else "critical"))
+            metric_card("Pendientes", f"{pending_count} ({pending_pct:.1f}%)",
+                       "good" if pending_pct == 0 else ("warning" if pending_pct < 10 else "critical"))
+            metric_card("Rechazados", f"{rejected_count} ({rejected_pct:.1f}%)",
+                       "good" if rejected_pct == 0 else ("warning" if rejected_pct < 5 else "critical"))
+            
+            # Recommendations
+            recommendations = []
+            if pending_count > 0:
+                recommendations.append(f"Priorizar validación de {pending_count} movimientos pendientes")
+            if rejected_count > 0:
+                recommendations.append(f"Investigar {rejected_count} rechazos: revisar patrones (usuario, tipo, producto)")
+            if validated_pct < 80 and total_movements > 0:
+                recommendations.append("Implementar recordatorios automáticos para validación oportuna")
+            if total_cost > 0 and avg_per_movement > 100:
+                recommendations.append("Evaluar consolidación de movimientos pequeños para reducir costos transaccionales")
+            
+            if recommendations:
+                h2("🎯 Recomendaciones")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
             
             h2("Resumen")
             kv("Total movimientos:", total_movements)
             kv("Total unidades movidas:", total_quantity)
-            total_cost = report_data.get("total_cost", 0)
             if total_cost:
                 kv("Costo total movimientos:", f"${total_cost:,.2f}")
             
@@ -1862,7 +1961,7 @@ class ReportsService:
                 h2("Por estado")
                 table(
                     ["Estado", "Cantidad"],
-[[s, c] for s, c in by_state.items()],
+                    [[s, c] for s, c in by_state.items()],
                 )
             
             if report_data.get("by_branch"):
@@ -1904,127 +2003,354 @@ class ReportsService:
 # ── Discrepancias ─────────────────────────────────────────────────────
         elif report_type == "discrepancies":
             s = report_data.get("summary", {})
+            items = report_data.get("items", [])
+            total_discrepancies = report_data.get("total_discrepancies", 0)
+            total_diff_abs = s.get("total_difference", 0)
+            positive_diff = s.get("positive_differences", 0)
+            negative_diff = s.get("negative_differences", 0)
+            total_impact = sum(i.get("impact_value", 0) for i in items)
+            
+            # Executive Summary
+            exec_lines = []
+            if total_discrepancies > 0:
+                exec_lines.append(f"Se detectaron {total_discrepancies} discrepancias con diferencia absoluta total de {total_diff_abs} unidades.")
+                exec_lines.append(f"Desglose: {positive_diff} con exceso (físico > digital), {negative_diff} con faltante (físico < digital).")
+                exec_lines.append(f"Impacto económico estimado: ${total_impact:,.2f}.")
+                
+                # Assess severity
+                if total_impact == 0:
+                    exec_lines.append("✅ Impacto económico: NULO (sin costos asociados).")
+                elif total_impact < 1000:
+                    exec_lines.append(f"✅ Impacto económico: BAJO (${total_impact:,.2f}).")
+                elif total_impact < 10000:
+                    exec_lines.append(f"⚠️  Impacto económico: MODERADO (${total_impact:,.2f}) - Revisar principales.")
+                else:
+                    exec_lines.append(f"🔴 Impacto económico: ALTO (${total_impact:,.2f}) - INVESTIGACIÓN URGENTE.")
+                
+                # Top offenders
+                if items:
+                    top_item = max(items, key=lambda x: x.get('impact_value', 0))
+                    exec_lines.append(f"Mayor impacto: {top_item['product']} ({top_item['branch']}) - ${top_item.get('impact_value', 0):,.2f}")
+            else:
+                exec_lines.append("✅ No se detectaron discrepancias en el período.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Key Metrics
+            h2("📊 Indicadores Clave")
+            metric_card("Total discrepancias", f"{total_discrepancies}")
+            metric_card("Diferencia absoluta", f"{total_diff_abs:,}")
+            metric_card("Exceso (físico > digital)", f"{positive_diff}")
+            metric_card("Faltante (físico < digital)", f"{negative_diff}")
+            metric_card("Impacto económico", f"${total_impact:,.2f}",
+                       "good" if total_impact == 0 else ("warning" if total_impact < 10000 else "critical"))
+            
+            # Recommendations
+            recommendations = []
+            if total_discrepancies > 0:
+                high_impact = [i for i in items if i.get('impact_value', 0) > total_impact * 0.2]
+                if high_impact:
+                    recommendations.append(f"Investigar {len(high_impact)} discrepancias de alto impacto (>20% del total)")
+                if negative_diff > positive_diff:
+                    recommendations.append("Predominan faltantes: revisar procesos de recepción, picking y mermas")
+                elif positive_diff > negative_diff:
+                    recommendations.append("Predominan excesos: revisar recepciones no registradas y conteos duplicados")
+                recommendations.append("Programar conteo cíclico en productos con discrepancias recurrentes")
+            
+            if recommendations:
+                h2("🎯 Recomendaciones")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
+            
             h2("Resumen")
-            kv("Total discrepancias:", report_data.get("total_discrepancies", 0))
-            kv("Diferencia absoluta total:", s.get("total_difference", 0))
-            kv("Con exceso (físico > digital):", s.get("positive_differences", 0))
-            kv("Con faltante (físico < digital):", s.get("negative_differences", 0))
-            total_impact = sum(i.get("impact_value", 0) for i in report_data.get("items", []))
+            kv("Total discrepancias:", total_discrepancies)
+            kv("Diferencia absoluta total:", total_diff_abs)
+            kv("Con exceso (físico > digital):", positive_diff)
+            kv("Con faltante (físico < digital):", negative_diff)
             kv("Impacto económico total:", f"${total_impact:,.2f}")
-            if report_data.get("items"):
+            if items:
                 h2("Detalle")
                 table(
                     ["Producto", "SKU", "Sucursal", "Físico", "Digital", "Diferencia", "%", "Impacto $"],
                     [[i["product"], i["sku"], i["branch"],
                       i["physical"], i["digital"], i["difference"], i["percentage"],
                       f"${i.get('impact_value', 0):,.2f}"]
-                      for i in report_data["items"][:50]],
+                      for i in items[:50]],
                 )
 
         # ── KPIs ──────────────────────────────────────────────────────────────
         elif report_type == "kpis":
-            h2("Resumen Ejecutivo")
             kpis = report_data.get("kpis", {})
             metrics = report_data.get("metrics", {})
             
-            if kpis:
-                lines.append("    Indicadores de rendimiento del inventario:")
-                for k, v in kpis.items():
-                    if k == "eri":
-                        if v >= 0.8:
-                            success(f"ERI (Eficiencia de Rotación de Inventario): {v:.2f} (óptimo: ≥0.80)")
-                        elif v >= 0.6:
-                            warning(f"ERI (Eficiencia de Rotación de Inventario): {v:.2f} (aceptable: ≥0.60, óptimo: ≥0.80)")
-                        else:
-                            critical(f"ERI (Eficiencia de Rotación de Inventario): {v:.2f} (crítico: <0.60) - Requiere atención")
-                    elif k == "eru":
-                        if v >= 0.85:
-                            success(f"ERU (Eficiencia de Reabastecimiento): {v:.2f} (óptimo: ≥0.85)")
-                        elif v >= 0.70:
-                            warning(f"ERU (Eficiencia de Reabastecimiento): {v:.2f} (aceptable: ≥0.70, óptimo: ≥0.85)")
-                        else:
-                            critical(f"ERU (Eficiencia de Reabastecimiento): {v:.2f} (crítico: <0.70) - Requiere atención")
+            eri = kpis.get("eri", 0)
+            eru = kpis.get("eru", 0)
             
-            h2("KPIs")
+            # Determine overall health
+            eri_status = "good" if eri >= 0.8 else ("warning" if eri >= 0.6 else "critical")
+            eru_status = "good" if eru >= 0.85 else ("warning" if eru >= 0.7 else "critical")
+            overall_good = eri_status == "good" and eru_status == "good"
+            
+            # Executive Summary
+            exec_lines = []
+            exec_lines.append("Indicadores clave de rendimiento de inventario:")
+            exec_lines.append(f"• ERI (Eficiencia de Rotación): {eri:.2f} — {'Óptimo' if eri >= 0.8 else ('Aceptable' if eri >= 0.6 else 'Crítico')} (≥0.80)")
+            exec_lines.append(f"• ERU (Eficiencia de Reabastecimiento): {eru:.2f} — {'Óptimo' if eru >= 0.85 else ('Aceptable' if eru >= 0.7 else 'Crítico')} (≥0.85)")
+            
+            if overall_good:
+                exec_lines.append("✅ Salud general: EXCELENTE - Ambos KPIs en zona óptima.")
+            elif eri_status == "good" or eru_status == "good":
+                exec_lines.append("⚠️  Salud general: ACEPTABLE - Un KPI óptimo, el otro requiere atención.")
+            else:
+                exec_lines.append("🔴 Salud general: CRÍTICA - Ambos KPIs por debajo de objetivos.")
+            
+            # Add context from metrics
+            disc_count = metrics.get("discrepancy_count", 0)
+            low_stock_count = metrics.get("low_stock_count", 0)
+            pending_mov = metrics.get("pending_movements", 0)
+            
+            if disc_count > 0:
+                exec_lines.append(f"⚠️  {disc_count} discrepancias activas afectando rotación.")
+            if low_stock_count > 0:
+                exec_lines.append(f"⚠️  {low_stock_count} productos bajo mínimo afectando servicio.")
+            if pending_mov > 0:
+                exec_lines.append(f"⏳ {pending_mov} movimientos pendientes de validación.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Key Metrics Dashboard
+            h2("📊 Dashboard de KPIs")
+            metric_card("ERI (Rotación)", f"{eri:.2%}", eri_status)
+            metric_card("ERU (Reabastecimiento)", f"{eru:.2%}", eru_status)
+            metric_card("Discrepancias activas", f"{disc_count}", "good" if disc_count == 0 else "warning")
+            metric_card("Stock bajo mínimo", f"{low_stock_count}", "good" if low_stock_count == 0 else "warning")
+            metric_card("Movimientos pendientes", f"{pending_mov}", "good" if pending_mov == 0 else "warning")
+            
+            # Recommendations
+            recommendations = []
+            if eri < 0.8:
+                recommendations.append("ERI bajo: Revisar productos de baja rotación, considerar liquidación o promociones")
+            if eru < 0.85:
+                recommendations.append("ERU bajo: Optimizar puntos de reorden y lead times de proveedores")
+            if disc_count > 0:
+                recommendations.append(f"Resolver {disc_count} discrepancias para mejorar precisión de KPIs")
+            if low_stock_count > 0:
+                recommendations.append(f"Reponer {low_stock_count} productos críticos para evitar stockouts")
+            if pending_mov > 0:
+                recommendations.append(f"Validar {pending_mov} movimientos pendientes para datos actualizados")
+            
+            if recommendations:
+                h2("🎯 Plan de Acción")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
+            
+            h2("KPIs Detalle")
             for k, v in kpis.items():
                 kv(k.upper() + ":", f"{v:.2f}" if isinstance(v, float) else v)
-            h2("Métricas")
+            h2("Métricas Operativas")
             for k, v in metrics.items():
                 kv(k + ":", v)
 
         # ── Top productos ─────────────────────────────────────────────────────
         elif report_type == "top_products":
-            h2("Resumen")
             metric = report_data.get("metric", "—")
             limit = report_data.get("limit", "—")
             products = report_data.get("products", [])
             
-            kv("Métrica:", metric)
-            kv("Límite:", limit)
-            
             if products:
-                h2("Resumen Ejecutivo")
-                lines.append(f"    Top {len(products)} productos según métrica: {metric}.")
-                if "total_quantity" in products[0]:
-                    top_quantity = sum(p.get("total_quantity", 0) for p in products)
-                    lines.append(f"    Estos productos representan un volumen significativo de actividad.")
-                insight("Revisar estos productos para optimizar gestión de inventario y promociones")
+                # Executive Summary
+                exec_lines = []
+                exec_lines.append(f"Ranking de los Top {len(products)} productos por: {metric}.")
                 
-                h2("Ranking")
+                metric_labels = {
+                    "most_moved": "más movidos (volumen)",
+                    "least_moved": "menos movidos (rotación lenta)",
+                    "most_stock": "mayor stock (potencial exceso)",
+                    "lowest_stock": "menor stock (riesgo stockout)",
+                    "most_discrepancies": "más discrepancias (control calidad)"
+                }
+                metric_desc = metric_labels.get(metric, metric)
+                exec_lines.append(f"Criterio: {metric_desc}.")
+                
+                if "total_quantity" in products[0]:
+                    total_qty = sum(p.get("total_quantity", 0) for p in products)
+                    exec_lines.append(f"Volumen combinado: {total_qty:,} unidades.")
+                elif "total_stock" in products[0]:
+                    total_stock = sum(p.get("total_stock", 0) for p in products)
+                    exec_lines.append(f"Stock combinado: {total_stock:,} unidades.")
+                elif "total_discrepancy" in products[0]:
+                    total_disc = sum(p.get("total_discrepancy", 0) for p in products)
+                    exec_lines.append(f"Discrepancia combinada: {total_disc:,} unidades.")
+                
+                executive_summary("\n".join(exec_lines))
+                
+                # Metrics
+                h2("📊 Indicadores")
+                metric_card("Métrica", metric_desc)
+                metric_card("Productos en ranking", str(len(products)))
+                metric_card("Límite solicitado", str(limit))
+                
+                # Recommendations
+                recommendations = []
+                if metric == "least_moved":
+                    recommendations.append("Productos de rotación lenta: evaluar promociones, bundles o liquidación")
+                elif metric == "lowest_stock":
+                    recommendations.append("Riesgo de stockout: priorizar órdenes de compra para items críticos")
+                elif metric == "most_stock":
+                    recommendations.append("Exceso de inventario: analizar demanda real vs stock actual")
+                elif metric == "most_discrepancies":
+                    recommendations.append("Problemas de control: auditar procesos de recepción/conteo en estos SKUs")
+                else:
+                    recommendations.append("Productos estrella: asegurar disponibilidad continua y visibilidad en piso")
+                
+                if recommendations:
+                    h2("🎯 Recomendaciones")
+                    for i, rec in enumerate(recommendations, 1):
+                        recommendation(f"{i}. {rec}")
+                
+                h2("Ranking Detallado")
                 first = products[0]
                 hdrs = list(first.keys())
                 table(hdrs, [[p.get(h) for h in hdrs] for p in products])
+            else:
+                lines.append("    No hay datos para mostrar con los filtros actuales.")
 
-        # ── Eficiencia por sucursal ────────────────────────────────────────────
+# ── Eficiencia por sucursal ────────────────────────────────────────────
         elif report_type == "branch_efficiency":
             branches = report_data.get("branches", [])
             if branches:
-                h2("Resumen Ejecutivo")
-                lines.append(f"    Análisis de eficiencia operativa para {len(branches)} sucursales.")
-                
                 high_rejection = [b for b in branches if b.get("rejection_rate", 0) > 15]
                 high_discrepancy = [b for b in branches if b.get("discrepancy_rate", 0) > 10]
                 slow_validation = [b for b in branches if b.get("avg_validation_days", 0) > 3]
+                total_branches = len(branches)
+                healthy_branches = total_branches - len(high_rejection) - len(high_discrepancy) - len(slow_validation)
+                
+                # Executive Summary
+                exec_lines = []
+                exec_lines.append(f"Análisis de eficiencia operativa para {total_branches} sucursales.")
+                exec_lines.append(f"Sucursales saludables: {healthy_branches}/{total_branches} ({healthy_branches/total_branches*100:.0f}%).")
                 
                 if high_rejection:
-                    critical(f"{len(high_rejection)} sucursales con tasa de rechazo >15%: {', '.join(b['branch'] for b in high_rejection)}")
+                    exec_lines.append(f"🔴 {len(high_rejection)} con ALTA TASA DE RECHAZO (>15%): {', '.join(b['branch'] for b in high_rejection)}")
                 if high_discrepancy:
-                    critical(f"{len(high_discrepancy)} sucursales con alta discrepancia >10%: {', '.join(b['branch'] for b in high_discrepancy)}")
+                    exec_lines.append(f"🔴 {len(high_discrepancy)} con ALTA DISCREPANCIA (>10%): {', '.join(b['branch'] for b in high_discrepancy)}")
                 if slow_validation:
-                    warning(f"{len(slow_validation)} sucursales con validación lenta >3 días: {', '.join(b['branch'] for b in slow_validation)}")
+                    exec_lines.append(f"⚠️  {len(slow_validation)} con VALIDACIÓN LENTA (>3 días): {', '.join(b['branch'] for b in slow_validation)}")
                 
-                if not high_rejection and not high_discrepancy and not slow_validation:
-                    success("Todas las sucursales operan dentro de parámetros aceptables")
+                if healthy_branches == total_branches:
+                    exec_lines.append("✅ TODAS las sucursales operan dentro de parámetros aceptables.")
                 
-                h2("Eficiencia por sucursal")
+                executive_summary("\n".join(exec_lines))
+                
+                # Metrics
+                h2("📊 Scorecard por Sucursal")
+                metric_card("Total sucursales", str(total_branches))
+                metric_card("Saludables", f"{healthy_branches}/{total_branches}")
+                metric_card("Alta rechazo", str(len(high_rejection)), "critical" if high_rejection else "good")
+                metric_card("Alta discrepancia", str(len(high_discrepancy)), "critical" if high_discrepancy else "good")
+                metric_card("Validación lenta", str(len(slow_validation)), "warning" if slow_validation else "good")
+                
+                # Recommendations
+                recommendations = []
+                if high_rejection:
+                    recommendations.append(f"Capacitar equipos en {len(high_rejection)} sucursales con alta tasa de rechazo")
+                if high_discrepancy:
+                    recommendations.append(f"Auditar procesos de conteo/recepción en {len(high_discrepancy)} sucursales problemáticas")
+                if slow_validation:
+                    recommendations.append(f"Implementar SLA de validación 48h en {len(slow_validation)} sucursales lentas")
+                if healthy_branches == total_branches:
+                    recommendations.append("Mantener estándares actuales; compartir mejores prácticas entre sucursales")
+                
+                if recommendations:
+                    h2("🎯 Plan de Mejora")
+                    for i, rec in enumerate(recommendations, 1):
+                        recommendation(f"{i}. {rec}")
+                
+                h2("Eficiencia por Sucursal")
                 table(
                     ["Sucursal", "Movimientos", "Tasa rechazo %",
                      "Días prom. validación", "Transf. enviadas", "Transf. recibidas",
-                     "Tasa discrepancias %"],
-                    [[b["branch"], b["total_movements"], b["rejection_rate"],
-                      b["avg_validation_days"], b["transfers_sent"],
-                      b["transfers_received"], b["discrepancy_rate"]]
-                     for b in branches],
+                     "Tasa discrepancias %", "Estado"],
+                    [[b["branch"], b["total_movements"], f"{b['rejection_rate']:.1f}%",
+                      f"{b['avg_validation_days']:.1f}" if b['avg_validation_days'] else "—",
+                      b["transfers_sent"], b["transfers_received"], f"{b['discrepancy_rate']:.1f}%",
+                      "🔴 Crítica" if b.get("rejection_rate", 0) > 15 or b.get("discrepancy_rate", 0) > 10 
+                      else ("🟡 Atención" if b.get("avg_validation_days", 0) > 3 else "🟢 OK")]
+                      for b in branches],
                 )
 
         # ── Valor de inventario ───────────────────────────────────────────────
         elif report_type == "inventory_value":
-            h2("Resumen")
-            kv("Valor total global:", f"${report_data.get('total_value', 0):,.2f}")
-            if report_data.get("by_branch"):
-                h2("Por sucursal")
+            total_value = report_data.get("total_value", 0)
+            total_items = report_data.get("total_items", 0)
+            no_price_count = report_data.get("no_price_count", 0)
+            by_branch = report_data.get("by_branch", {})
+            items = report_data.get("items", [])
+            
+            avg_value = (total_value / total_items) if total_items > 0 else 0
+            pct_no_price = (no_price_count / total_items * 100) if total_items > 0 else 0
+            
+            # Executive Summary
+            exec_lines = []
+            exec_lines.append(f"Valor total de inventario: ${total_value:,.2f} distribuido en {total_items:,} artículos.")
+            exec_lines.append(f"Valor promedio por artículo: ${avg_value:,.2f}.")
+            
+            if no_price_count > 0:
+                exec_lines.append(f"⚠️  {no_price_count} artículos ({pct_no_price:.1f}%) SIN precio asignado - valor = $0.")
+                exec_lines.append("   Estos items no contribuyen al valor total; asignar costos para precisión.")
+            else:
+                exec_lines.append("✅ Todos los artículos tienen precio/costo asignado.")
+            
+            # Top concentration
+            if items:
+                top5_value = sum(i.get("value", 0) for i in items[:5])
+                top5_pct = (top5_value / total_value * 100) if total_value > 0 else 0
+                exec_lines.append(f"Top 5 items concentran {top5_pct:.1f}% del valor total (${top5_value:,.2f}).")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Key Metrics
+            h2("📊 Indicadores Clave")
+            metric_card("Valor total inventario", f"${total_value:,.2f}")
+            metric_card("Total artículos", f"{total_items:,}")
+            metric_card("Valor promedio/item", f"${avg_value:,.2f}")
+            metric_card("Sin precio asignado", f"{no_price_count} ({pct_no_price:.1f}%)",
+                       "good" if no_price_count == 0 else "warning")
+            
+            # Branch distribution
+            if by_branch:
+                h2("Distribución por Sucursal")
                 table(
-                    ["Sucursal", "Artículos", "Valor total"],
-                    [[b, v["items"], f"${v['value']:,.2f}"]
-                     for b, v in report_data["by_branch"].items()],
+                    ["Sucursal", "Artículos", "Valor Total", "% del Total"],
+                    [[b, v["items"], f"${v['value']:,.2f}", f"{(v['value']/total_value*100):.1f}%" if total_value > 0 else "0%"]
+                     for b, v in sorted(by_branch.items(), key=lambda x: x[1]["value"], reverse=True)],
                 )
-            if report_data.get("items"):
-                h2("Detalle (top 50)")
+            
+            # Recommendations
+            recommendations = []
+            if no_price_count > 0:
+                recommendations.append(f"Asignar costos a {no_price_count} productos sin precio (revisar unit_cost en Inventory o unit_price en Product)")
+            if items:
+                zero_value = [i for i in items if i.get("value", 0) == 0]
+                if zero_value:
+                    recommendations.append(f"{len(zero_value)} productos con valor $0: revisar si stock real o error de datos")
+            if total_value > 1000000:
+                recommendations.append("Inventario >$1M: verificar cobertura de seguro y límites de riesgo")
+            
+            if recommendations:
+                h2("🎯 Recomendaciones")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
+            
+            # Detail
+            if items:
+                h2("Detalle (Top 50 por valor)")
                 table(
-                    ["Producto", "SKU", "Sucursal", "Stock", "Costo unit.", "Valor"],
+                    ["Producto", "SKU", "Sucursal", "Stock", "Costo unit.", "Valor", "% Total"],
                     [[i["product"], i["sku"], i["branch"],
-                      i["stock"], i["unit_price"], f"${i['value']:,.2f}"]
-                     for i in report_data["items"][:50]],
+                      i["stock"], i["unit_price"] if i["unit_price"] else "—", f"${i['value']:,.2f}",
+                      f"{(i['value']/total_value*100):.1f}%" if total_value > 0 else "0%"]
+                     for i in items[:50]],
                 )
 
         # ── Transferencias ────────────────────────────────────────────────────
@@ -2032,27 +2358,64 @@ class ReportsService:
             total_transfers = report_data.get("total_transfers", 0)
             pending_reception = report_data.get("pending_reception", 0)
             items = report_data.get("items", [])
+            pending_pct = (pending_reception / total_transfers * 100) if total_transfers > 0 else 0
             
-            h2("Resumen")
-            kv("Total transferencias:", total_transfers)
-            kv("Pendientes de recepción:", pending_reception)
-            
+            # Executive Summary
+            exec_lines = []
             if total_transfers > 0:
-                h2("Resumen Ejecutivo")
-                pending_pct = (pending_reception / total_transfers * 100) if total_transfers > 0 else 0
+                exec_lines.append(f"Total de transferencias inter-sucursal: {total_transfers}.")
+                exec_lines.append(f"Pendientes de recepción: {pending_reception} ({pending_pct:.1f}%).")
+                
                 if pending_reception == 0:
-                    success("Todas las transferencias han sido recibidas")
+                    exec_lines.append("✅ Recepción: TODAS las transferencias han sido recibidas.")
                 elif pending_pct < 10:
-                    warning(f"{pending_reception} transferencias pendientes ({pending_pct:.1f}% del total)")
+                    exec_lines.append(f"⚠️  {pending_reception} transferencias pendientes ({pending_pct:.1f}%) - Seguimiento rutinario.")
                 else:
-                    critical(f"{pending_reception} transferencias pendientes ({pending_pct:.1f}% del total) - Requiere seguimiento")
+                    exec_lines.append(f"🔴 {pending_reception} transferencias pendientes ({pending_pct:.1f}%) - SEGUIMIENTO URGENTE.")
+                
+                # Analyze by branch pair
+                by_pair = report_data.get("by_branch_pair", {})
+                if by_pair:
+                    top_pair = max(by_pair.items(), key=lambda x: x[1]["count"])
+                    exec_lines.append(f"Ruta más activa: {top_pair[0]} ({top_pair[1]['count']} transferencias, {top_pair[1]['total_quantity']} unidades).")
+            else:
+                exec_lines.append("No hay transferencias en el período seleccionado.")
             
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics
+            h2("📊 Indicadores")
+            metric_card("Total transferencias", str(total_transfers))
+            metric_card("Pendientes recepción", f"{pending_reception} ({pending_pct:.1f}%)", 
+                       "good" if pending_reception == 0 else ("warning" if pending_pct < 10 else "critical"))
+            metric_card("Completadas", str(total_transfers - pending_reception))
+            
+            # Recommendations
+            recommendations = []
+            if pending_reception > 0:
+                old_pending = [i for i in items if not i.get("is_received") and i.get("created_at")]
+                if old_pending:
+                    recommendations.append(f"Contactar destino para {len(old_pending)} transferencias sin confirmar recepción")
+            if total_transfers > 0 and pending_pct > 20:
+                recommendations.append("Alta tasa de pendientes: revisar proceso de confirmación de recepción en destino")
+            if by_pair:
+                unbalanced = [(k, v) for k, v in by_pair.items() if v["count"] > total_transfers * 0.3]
+                if unbalanced:
+                    recommendations.append(f"Ruta concentrada: {unbalanced[0][0]} - evaluar envíos directos vs consolidados")
+            
+            if recommendations:
+                h2("🎯 Recomendaciones")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
+            
+            # Detail
             if items:
-                h2("Detalle (primeras 50)")
+                h2(f"Detalle (primeras 50 de {len(items)})")
                 table(
-                    ["Producto", "Origen", "Destino", "Cantidad", "Estado", "Recibida"],
+                    ["Producto", "Origen", "Destino", "Cantidad", "Estado", "Recibida", "Fecha"],
                     [[i["product"], i["origin_branch"], i["destination_branch"],
-                      i["quantity"], i["state"], "Sí" if i["is_received"] else "No"]
+                      i["quantity"], i["state"], "Sí" if i["is_received"] else "No",
+                      i.get("created_at", "—")[:10]]
                      for i in items[:50]],
                 )
 
@@ -2061,140 +2424,333 @@ class ReportsService:
             metric = report_data.get("metric", "—")
             periods_count = report_data.get("periods_count", "—")
             data_points = report_data.get("data_points", [])
+            trend = report_data.get("trend", "—")
             
-            h2("Resumen")
-            kv("Métrica:", metric)
-            kv("Períodos:", periods_count)
+            metric_labels = {
+                "movimientos_total": "Total de movimientos",
+                "stock_total": "Stock total",
+                "discrepancias_count": "Conteo de discrepancias"
+            }
+            metric_desc = metric_labels.get(metric, metric)
             
             if data_points and len(data_points) >= 2:
-                h2("Resumen Ejecutivo")
                 first_val = data_points[0].get("value", 0)
                 last_val = data_points[-1].get("value", 0)
                 change = last_val - first_val
                 change_pct = (change / first_val * 100) if first_val != 0 else 0
                 
+                # Determine trend direction
                 if change > 0:
-                    lines.append(f"    Tendencia: 📈 Crecimiento del {change_pct:.1f}% ({first_val} → {last_val})")
+                    trend_icon = "📈"
+                    trend_word = "CRECIENTE"
                 elif change < 0:
-                    lines.append(f"    Tendencia: 📉 Decrecimiento del {abs(change_pct):.1f}% ({first_val} → {last_val})")
+                    trend_icon = "📉"
+                    trend_word = "DECRECIENTE"
                 else:
-                    lines.append(f"    Tendencia: ➡ Estable ({first_val} → {last_val})")
+                    trend_icon = "➡️"
+                    trend_word = "ESTABLE"
                 
+                # Executive Summary
+                exec_lines = []
+                exec_lines.append(f"Análisis de tendencia para: {metric_desc} ({periods_count} períodos).")
+                exec_lines.append(f"Dirección general: {trend_icon} {trend_word} ({change_pct:+.1f}%).")
+                exec_lines.append(f"Valor inicial: {first_val:,} → Valor final: {last_val:,} (Δ {change:+,}).")
+                
+                # Assess significance
                 if abs(change_pct) > 20:
-                    insight(f"Variación significativa del {abs(change_pct):.1f}% - Revisar causas")
+                    exec_lines.append(f"⚠️  Variación SIGNIFICATIVA del {abs(change_pct):.1f}% - Investigar causas raíz.")
+                elif abs(change_pct) > 10:
+                    exec_lines.append(f"📊 Variación MODERADA del {abs(change_pct):.1f}% - Monitorear evolución.")
+                else:
+                    exec_lines.append(f"✅ Variación MENOR del {abs(change_pct):.1f}% - Dentro de rango normal.")
+                
+                # Peak/valley
+                max_val = max(p.get("value", 0) for p in data_points)
+                min_val = min(p.get("value", 0) for p in data_points)
+                max_period = next(p["period"] for p in data_points if p.get("value", 0) == max_val)
+                min_period = next(p["period"] for p in data_points if p.get("value", 0) == min_val)
+                exec_lines.append(f"Pico: {max_val:,} ({max_period}) | Valle: {min_val:,} ({min_period})")
+                
+                executive_summary("\n".join(exec_lines))
+                
+                # Metrics
+                h2("📊 Indicadores de Tendencia")
+                metric_card("Métrica", metric_desc)
+                metric_card("Períodos analizados", str(periods_count))
+                metric_card("Dirección", f"{trend_icon} {trend_word} ({change_pct:+.1f}%)",
+                           "good" if change > 0 else ("warning" if change == 0 else "critical"))
+                metric_card("Cambio absoluto", f"{change:+,}")
+                metric_card("Rango (min-max)", f"{min_val:,} - {max_val:,}")
+                
+                # Recommendations
+                recommendations = []
+                if abs(change_pct) > 20:
+                    recommendations.append(f"Variación >20%: Investigar eventos externos (promociones, proveedores, estacionalidad)")
+                if change < 0 and metric == "movimientos_total":
+                    recommendations.append("Caída en movimientos: revisar demanda, competencia y calendario comercial")
+                if change > 0 and metric == "discrepancias_count":
+                    recommendations.append("Aumento de discrepancias: auditar procesos de conteo y recepción")
+                if abs(change_pct) < 5:
+                    recommendations.append("Tendencia estable: mantener controles actuales, planificar capacidad futura")
+                
+                if recommendations:
+                    h2("🎯 Recomendaciones")
+                    for i, rec in enumerate(recommendations, 1):
+                        recommendation(f"{i}. {rec}")
             
             if data_points:
-                h2("Datos")
+                h2("Serie Temporal")
                 table(
-                    ["Período", "Valor"],
-                    [[p["period"], p["value"]] for p in data_points],
+                    ["Período", "Valor", "Δ vs anterior"],
+                    [[p["period"], f"{p['value']:,}", 
+                      f"{(p['value'] - data_points[i-1]['value']):+,}" if i > 0 else "—"]
+                     for i, p in enumerate(data_points)],
                 )
 
         # ── Comparación ───────────────────────────────────────────────────────
         elif report_type == "comparison":
+            p1 = report_data.get("period1", {})
+            p2 = report_data.get("period2", {})
+            diffs = report_data.get("differences", {})
+            report_type_name = report_data.get("report_type", "").replace("_", " ").title()
+            
+            # Executive Summary
+            exec_lines = []
+            exec_lines.append(f"Comparación de {report_type_name} entre dos períodos.")
+            
+            p1_from = report_data.get("period1", {}).get("from", "—")[:10]
+            p1_to = report_data.get("period1", {}).get("to", "—")[:10]
+            p2_from = report_data.get("period2", {}).get("from", "—")[:10]
+            p2_to = report_data.get("period2", {}).get("to", "—")[:10]
+            exec_lines.append(f"Período 1: {p1_from} a {p1_to}")
+            exec_lines.append(f"Período 2: {p2_from} a {p2_to}")
+            
+            # Key differences
+            significant_changes = []
+            for k, v in diffs.items():
+                if isinstance(v, dict) and "delta_pct" in v:
+                    pct = v["delta_pct"]
+                    if abs(pct) > 10:
+                        direction = "📈" if pct > 0 else "📉"
+                        significant_changes.append(f"{direction} {k}: {v['period1']:,} → {v['period2']:,} ({pct:+.1f}%)")
+            
+            if significant_changes:
+                exec_lines.append("Cambios significativos (>10%):")
+                for ch in significant_changes[:5]:
+                    exec_lines.append(f"  • {ch}")
+            else:
+                exec_lines.append("✅ Sin cambios significativos (>10%) entre períodos.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics
+            h2("📊 Resumen Comparativo")
+            metric_card("Tipo de reporte", report_type_name)
+            metric_card("Período 1", f"{p1_from} a {p1_to}")
+            metric_card("Período 2", f"{p2_from} a {p2_to}")
+            metric_card("Métricas con cambio >10%", str(len(significant_changes)))
+            
+            # Detailed comparison
             for period_key, period_label in [("period1", "Período 1"), ("period2", "Período 2")]:
                 p = report_data.get(period_key, {})
-                if p:
+                if p and "data" in p:
                     h2(period_label)
-                    for k, v in p.items():
+                    data = p["data"]
+                    for k, v in data.items():
                         if not isinstance(v, (dict, list)):
                             kv(k + ":", v)
-            if report_data.get("differences"):
-                h2("Diferencias")
-                for k, v in report_data["differences"].items():
-                    kv(k + ":", v)
+            
+            if diffs:
+                h2("Diferencias Detalladas")
+                table(
+                    ["Métrica", "Período 1", "Período 2", "Δ Absoluto", "Δ %"],
+                    [[k, f"{v['period1']:,}", f"{v['period2']:,}", f"{v['delta']:+,}", f"{v['delta_pct']:+.1f}%"]
+                     for k, v in diffs.items() if isinstance(v, dict) and "delta_pct" in v],
+                )
+            
+            # Recommendations
+            if significant_changes:
+                h2("🎯 Recomendaciones")
+                recommendation("1. Analizar causas de variaciones >10% (estacionalidad, promociones, problemas operativos)")
+                recommendation("2. Comparar con mismo período año anterior para detectar patrones")
+                recommendation("3. Ajustar pronósticos y planes de compra según nueva tendencia")
 
         # ── Actividad usuario ─────────────────────────────────────────────────
         elif report_type == "user_activity":
-            h2("Resumen")
-            kv("Total actividades:", report_data.get("total_activities", 0))
-            if report_data.get("by_event_type"):
+            total_activities = report_data.get("total_activities", 0)
+            by_event = report_data.get("by_event_type", {})
+            activities = report_data.get("activities", [])
+            
+            # Executive Summary
+            exec_lines = []
+            exec_lines.append(f"Total de actividades registradas: {total_activities:,}.")
+            
+            if by_event:
+                top_event = max(by_event.items(), key=lambda x: x[1])
+                exec_lines.append(f"Evento más frecuente: {top_event[0]} ({top_event[1]:,} veces, {top_event[1]/total_activities*100:.1f}%).")
+                exec_lines.append(f"Tipos de eventos distintos: {len(by_event)}.")
+            
+            if activities:
+                unique_users = len(set(a.get("user", "—") for a in activities))
+                exec_lines.append(f"Usuarios activos: {unique_users}.")
+                
+                # Recent activity
+                exec_lines.append(f"Período cubre {len(set(a.get('fecha', '—')[:10] for a in activities))} días de actividad.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics
+            h2("📊 Indicadores de Actividad")
+            metric_card("Total actividades", f"{total_activities:,}")
+            metric_card("Tipos de evento", str(len(by_event)))
+            if activities:
+                unique_users = len(set(a.get("user", "—") for a in activities))
+                metric_card("Usuarios activos", str(unique_users))
+            
+            if by_event:
                 h2("Por tipo de evento")
                 table(
-                    ["Evento", "Cantidad"],
-                    [[e, c] for e, c in report_data["by_event_type"].items()],
+                    ["Evento", "Cantidad", "%"],
+                    [[e, f"{c:,}", f"{c/total_activities*100:.1f}%"] for e, c in sorted(by_event.items(), key=lambda x: -x[1])],
                 )
 
         # ── Auditoría de Historial ────────────────────────────────────────────
         elif report_type == "history_audit":
-            h2("Resumen")
-            kv("Total registros en BD:", report_data.get("total_entries", 0))
-            kv("Registros incluidos:", report_data.get("returned_entries", 0))
-
-            if report_data.get("by_entity_type"):
+            total_entries = report_data.get("total_entries", 0)
+            returned = report_data.get("returned_entries", 0)
+            by_entity = report_data.get("by_entity_type", {})
+            by_event = report_data.get("by_event_type", {})
+            by_user = report_data.get("by_user", {})
+            by_date = report_data.get("by_date", {})
+            top_entities = report_data.get("top_entities", [])
+            items = report_data.get("items", [])
+            
+            # Executive Summary
+            exec_lines = []
+            exec_lines.append(f"Auditoría de historial: {returned:,} de {total_entries:,} registros analizados ({returned/total_entries*100:.1f}%)." if total_entries > 0 else "Sin registros en el período.")
+            
+            if by_entity:
+                top_ent = max(by_entity.items(), key=lambda x: x[1])
+                exec_lines.append(f"Entidad más auditada: {top_ent[0]} ({top_ent[1]:,} eventos, {top_ent[1]/returned*100:.1f}%).")
+            
+            if by_event:
+                top_evt = max(by_event.items(), key=lambda x: x[1])
+                exec_lines.append(f"Evento más frecuente: {top_evt[0]} ({top_evt[1]:,} veces).")
+            
+            if by_user:
+                top_usr = max(by_user.items(), key=lambda x: x[1])
+                exec_lines.append(f"Usuario más activo: {top_usr[0]} ({top_usr[1]:,} acciones).")
+            
+            if by_date:
+                exec_lines.append(f"Período cubre {len(by_date)} días de actividad.")
+            
+            # Detect anomalies
+            deleted_count = sum(1 for i in items if i.get("eliminado"))
+            if deleted_count > 0:
+                exec_lines.append(f"⚠️  {deleted_count} registros de entidades eliminadas detectados.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics
+            h2("📊 Indicadores de Auditoría")
+            metric_card("Total en BD", f"{total_entries:,}")
+            metric_card("En reporte", f"{returned:,}")
+            metric_card("Tipos de entidad", str(len(by_entity)))
+            metric_card("Tipos de evento", str(len(by_event)))
+            metric_card("Usuarios activos", str(len(by_user)))
+            metric_card("Días con actividad", str(len(by_date)))
+            if items:
+                metric_card("Entidades eliminadas", str(deleted_count), "warning" if deleted_count > 0 else "good")
+            
+            # Tables
+            if by_entity:
                 h2("Por tipo de entidad")
-                table(
-                    ["Tipo", "Eventos"],
-                    [[t, c] for t, c in report_data["by_entity_type"].items()],
-                )
-
-            if report_data.get("by_event_type"):
-                h2("Por tipo de evento (top 20)")
-                rows = list(report_data["by_event_type"].items())[:20]
-                table(["Evento", "Cantidad"], [[e, c] for e, c in rows])
-
-            if report_data.get("by_user"):
+                table(["Tipo", "Eventos", "%"], [[t, f"{c:,}", f"{c/returned*100:.1f}%"] for t, c in sorted(by_entity.items(), key=lambda x: -x[1])])
+            
+            if by_event:
+                h2("Por tipo de evento (Top 20)")
+                table(["Evento", "Cantidad", "%"], [[e, f"{c:,}", f"{c/returned*100:.1f}%"] for e, c in list(sorted(by_event.items(), key=lambda x: -x[1]))[:20]])
+            
+            if by_user:
                 h2("Por usuario")
-                table(
-                    ["Usuario", "Acciones"],
-                    [[u, c] for u, c in report_data["by_user"].items()],
-                )
-
-            if report_data.get("by_date"):
+                table(["Usuario", "Acciones", "%"], [[u, f"{c:,}", f"{c/returned*100:.1f}%"] for u, c in sorted(by_user.items(), key=lambda x: -x[1])])
+            
+            if by_date:
                 h2("Actividad diaria")
+                table(["Fecha", "Eventos"], [[_fmt_date_iso_to_readable(d), f"{c:,}"] for d, c in sorted(by_date.items())])
+            
+            if top_entities:
+                h2("Entidades más activas (Top 20)")
+                table(["Tipo", "Entidad", "Eventos"], [[e["entity_type"], e["entity_name"], f"{e['event_count']:,}"] for e in top_entities])
+            
+            if items:
+                h2(f"Detalle ({len(items)} registros)")
                 table(
-                    ["Fecha", "Eventos"],
-                    [[_fmt_date_iso_to_readable(d), c] for d, c in report_data["by_date"].items()],
-                )
-
-            if report_data.get("top_entities"):
-                h2("Entidades más activas (top 20)")
-                table(
-                    ["Tipo", "Entidad", "Eventos"],
-                    [[e["entity_type"], e["entity_name"], e["event_count"]]
-                     for e in report_data["top_entities"]],
-                )
-
-            if report_data.get("items"):
-                h2(f"Detalle ({len(report_data['items'])} registros)")
-                table(
-                    ["ID", "Fecha", "Evento", "Tipo", "Entidad", "Usuario", "Acción"],
+                    ["ID", "Fecha", "Evento", "Tipo", "Entidad", "Usuario", "Acción", "Eliminado"],
                     [[i["id"], _fmt_date_iso_to_readable(i["fecha"]), i["evento"], i["tipo"],
-                      i["entidad"], i["usuario"], i["accion"]]
-                     for i in report_data["items"][:200]],
+                      i["entidad"], i["usuario"], i["accion"], "Sí" if i.get("eliminado") else "No"]
+                     for i in items[:200]],
                 )
-                if len(report_data["items"]) > 200:
-                    lines.append(
-                        f"\n  … y {len(report_data['items']) - 200} registros más "
-                        "(exporta a CSV/Excel para verlos todos)"
-                    )
+                if len(items) > 200:
+                    lines.append(f"\n  … y {len(items) - 200} registros más (exporta a CSV/Excel para verlos todos)")
 
         elif report_type == "count_sessions":
             s = report_data.get("summary", {})
             total_sessions = s.get("total_sessions", 0)
             completed = s.get("completed", 0)
+            in_progress = s.get("in_progress", 0)
+            pending = s.get("pending", 0)
+            items_counted = s.get("total_items_counted", 0)
+            discrepancies = s.get("total_discrepancies_found", 0)
+            completion_rate = (completed / total_sessions * 100) if total_sessions > 0 else 0
             
-            h2("Resumen")
-            kv("Total sesiones:", total_sessions)
-            kv("Completadas:", completed)
-            kv("En progreso:", s.get("in_progress", 0))
-            kv("Pendientes:", s.get("pending", 0))
-            kv("Ítems contados:", s.get("total_items_counted", 0))
-            kv("Discrepancias encontradas:", s.get("total_discrepancies_found", 0))
-            
+            # Executive Summary
+            exec_lines = []
             if total_sessions > 0:
-                h2("Resumen Ejecutivo")
-                completion_rate = (completed / total_sessions * 100) if total_sessions > 0 else 0
-                lines.append(f"    Tasa de completitud: {completion_rate:.1f}% ({completed}/{total_sessions} sesiones)")
+                exec_lines.append(f"Programadas {total_sessions} sesiones de conteo: {completed} completadas ({completion_rate:.1f}%), {in_progress} en progreso, {pending} pendientes.")
+                exec_lines.append(f"Total ítems contados: {items_counted:,} | Discrepancias detectadas: {discrepancies}.")
+                
                 if completion_rate == 100:
-                    success("Todas las sesiones de conteo han sido completadas")
+                    exec_lines.append("✅ Completitud: TODAS las sesiones finalizadas.")
                 elif completion_rate >= 80:
-                    warning(f"{completion_rate:.1f}% de sesiones completadas - {s.get('in_progress', 0)} en progreso")
+                    exec_lines.append(f"⚠️  Completitud {completion_rate:.1f}% - {in_progress} en progreso requieren cierre.")
                 else:
-                    critical(f"Solo {completion_rate:.1f}% de sesiones completadas - Requiere atención")
+                    exec_lines.append(f"🔴 Completitud BAJA ({completion_rate:.1f}%) - {pending} pendientes + {in_progress} en curso.")
+                
+                if discrepancies > 0:
+                    exec_lines.append(f"⚠️  {discrepancies} discrepancias halladas - Revisar ajustes necesarios.")
+            else:
+                exec_lines.append("No hay sesiones de conteo en el período.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics
+            h2("📊 Scorecard Conteo")
+            metric_card("Total sesiones", str(total_sessions))
+            metric_card("Completadas", f"{completed} ({completion_rate:.1f}%)", "good" if completion_rate == 100 else ("warning" if completion_rate >= 80 else "critical"))
+            metric_card("En progreso", str(in_progress), "warning" if in_progress > 0 else "good")
+            metric_card("Pendientes", str(pending), "good" if pending == 0 else "warning")
+            metric_card("Ítems contados", f"{items_counted:,}")
+            metric_card("Discrepancias", str(discrepancies), "good" if discrepancies == 0 else "warning")
+            
+            # Recommendations
+            recommendations = []
+            if pending > 0:
+                recommendations.append(f"Programar inicio de {pending} sesiones pendientes")
+            if in_progress > 0:
+                recommendations.append(f"Dar seguimiento a {in_progress} sesiones en progreso para cierre oportuno")
+            if discrepancies > 0:
+                recommendations.append("Investigar discrepancias y aplicar ajustes de inventario")
+            if completion_rate < 80 and total_sessions > 0:
+                recommendations.append("Revisar proceso: baja completitud sugiere problemas de planificación o ejecución")
+            
+            if recommendations:
+                h2("🎯 Recomendaciones")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
             
             if report_data.get("sessions"):
-                h2("Sesiones")
+                h2("Detalle de Sesiones")
                 table(
                     ["ID", "Sucursal", "Fecha", "Estado", "Validador", "Ítems", "Discrepancias"],
                     [[srow["session_id"], srow["branch_name"], _fmt_date_iso_to_readable(srow["scheduled_date"]), srow["status"], srow["validator_count"], srow["items_total"], srow["items_with_discrepancy"]] for srow in report_data["sessions"][:50]],
@@ -2218,104 +2774,413 @@ class ReportsService:
             if total_requests > 0:
                 h2("Resumen Ejecutivo")
                 pending_pct = (total_pending / total_requests * 100) if total_requests > 0 else 0
+                avg_hours = s.get("average_approval_time_hours", 0)
+                
+                exec_lines = []
+                exec_lines.append(f"Solicitudes de transferencia: {total_requests} totales, {total_pending} pendientes ({pending_pct:.1f}%).")
+                exec_lines.append(f"Aprobadas: {s.get('approved', 0)} | Rechazadas: {s.get('rejected', 0)}.")
+                exec_lines.append(f"Tiempo promedio de aprobación: {avg_hours:.1f} horas.")
+                
                 if total_pending == 0:
-                    success("No hay solicitudes pendientes de aprobación")
+                    exec_lines.append("✅ Flujo de aprobaciones: SIN CUERLOS - todo al día.")
                 elif pending_pct < 10:
-                    warning(f"{total_pending} solicitudes pendientes ({pending_pct:.1f}% del total)")
+                    exec_lines.append(f"⚠️  {total_pending} pendientes ({pending_pct:.1f}%) - Gestión rutinaria.")
                 else:
-                    critical(f"{total_pending} solicitudes pendientes ({pending_pct:.1f}% del total) - Requiere atención")
+                    exec_lines.append(f"🔴 CUELLO DE BOTELLA: {total_pending} pendientes ({pending_pct:.1f}%) - ESCALAR.")
+                
+                # Aging analysis
+                if report_data.get("pending_approvals"):
+                    old_pending = [p for p in report_data["pending_approvals"] if p.get("waiting_hours", 0) > 48]
+                    if old_pending:
+                        exec_lines.append(f"⏰ {len(old_pending)} solicitudes >48h sin resolver - Riesgo operativo.")
+                
+                executive_summary("\n".join(exec_lines))
+                
+                # Metrics
+                h2("📊 KPIs de Aprobación")
+                metric_card("Total solicitudes", str(total_requests))
+                metric_card("Pendientes", f"{total_pending} ({pending_pct:.1f}%)", 
+                           "good" if total_pending == 0 else ("warning" if pending_pct < 10 else "critical"))
+                metric_card("Pendientes Admin", str(s.get("pending_admin", 0)))
+                metric_card("Pendientes Manager", str(s.get("pending_manager", 0)))
+                metric_card("Tiempo prom. aprobación", f"{avg_hours:.1f}h",
+                           "good" if avg_hours < 24 else ("warning" if avg_hours < 48 else "critical"))
+                
+                # Recommendations
+                recommendations = []
+                if total_pending > 0:
+                    recommendations.append("Asignar aprobador designado por turno para reducir tiempo de espera")
+                    if avg_hours > 24:
+                        recommendations.append("Implementar recordatorios automáticos cada 12h para aprobadores")
+                if s.get("rejected", 0) > 0:
+                    recommendations.append(f"Analizar {s.get('rejected', 0)} rechazos: ¿patrón de errores en origen?")
+                
+                if recommendations:
+                    h2("🎯 Recomendaciones")
+                    for i, rec in enumerate(recommendations, 1):
+                        recommendation(f"{i}. {rec}")
             
             if report_data.get("pending_approvals"):
                 h2("Pendientes de aprobación")
                 table(
-                    ["Movimiento", "Producto", "Origen", "Destino", "Cant.", "Nivel", "Creada", "Horas espera"],
-                    [[row["movement_id"], row["product_name"], row["origin_branch"], row["destination_branch"], row["quantity"], row["approval_level"], _fmt_date_iso_to_readable(row["created_at"]), row["waiting_hours"]] for row in report_data["pending_approvals"][:20]],
+                    ["Movimiento", "Producto", "Origen", "Destino", "Cant.", "Nivel", "Creada", "Horas espera", "Urgencia"],
+                    [[row["movement_id"], row["product_name"], row["origin_branch"], row["destination_branch"], row["quantity"], row["approval_level"], _fmt_date_iso_to_readable(row["created_at"]), row["waiting_hours"], "🔴 >48h" if row.get("waiting_hours", 0) > 48 else ("🟡 >24h" if row.get("waiting_hours", 0) > 24 else "🟢 <24h")] for row in report_data["pending_approvals"][:20]],
                 )
 
         elif report_type == "alerts":
             s = report_data.get("summary", {})
             total_alerts = s.get("total_alerts", 0)
             open_alerts = s.get("open_alerts", 0)
+            resolved_alerts = s.get("resolved_alerts", 0)
+            avg_resolution = s.get("average_resolution_hours", 0)
+            by_severity = s.get("by_severity", {})
+            by_type = s.get("by_type", {})
+            by_branch = report_data.get("by_branch", {})
+            top_open = report_data.get("top_open_alerts", [])
+            open_pct = (open_alerts / total_alerts * 100) if total_alerts > 0 else 0
+            critical_open = sum(1 for a in top_open if a.get("severity", "").lower() == "critical")
             
-            h2("Resumen")
-            kv("Total alertas:", total_alerts)
-            kv("Abiertas:", open_alerts)
-            kv("Resueltas:", s.get("resolved_alerts", 0))
-            kv("Promedio hrs. resolución:", s.get("average_resolution_hours", 0))
-            
+            # Executive Summary
+            exec_lines = []
             if total_alerts > 0:
-                h2("Resumen Ejecutivo")
-                open_pct = (open_alerts / total_alerts * 100) if total_alerts > 0 else 0
-                if open_alerts == 0:
-                    success("No hay alertas abiertas")
-                elif open_pct < 20:
-                    warning(f"{open_alerts} alertas abiertas ({open_pct:.1f}% del total)")
-                else:
-                    critical(f"{open_alerts} alertas abiertas ({open_pct:.1f}% del total) - Requiere atención urgente")
-            
-            if report_data.get("top_open_alerts"):
-                h2("🔴 Alertas abiertas prioritarias")
-                for row in report_data["top_open_alerts"][:10]:
-                    severity = row.get("severity", "info").lower()
-                    if severity == "critical":
-                        lines.append(f"    🔴 CRÍTICA: {row['type']} - {row['product_name']} en {row['branch_name']} ({row['hours_open']}h)")
-                    elif severity == "high":
-                        lines.append(f"    🟡 ALTA: {row['type']} - {row['product_name']} en {row['branch_name']} ({row['hours_open']}h)")
-                    else:
-                        lines.append(f"    🔵 INFO: {row['type']} - {row['product_name']} en {row['branch_name']} ({row['hours_open']}h)")
+                exec_lines.append(f"Total alertas en período: {total_alerts:,} | Abiertas: {open_alerts} ({open_pct:.1f}%) | Resueltas: {resolved_alerts:,}.")
+                exec_lines.append(f"Tiempo promedio de resolución: {avg_resolution:.1f}h.")
                 
-                h2("Detalle")
+                if open_alerts == 0:
+                    exec_lines.append("✅ Gestión de alertas: LIMPIA - Sin backlog.")
+                elif open_pct < 20:
+                    exec_lines.append(f"⚠️  Backlog controlado: {open_alerts} abiertas - Seguimiento rutinario.")
+                else:
+                    exec_lines.append(f"🔴 BACKLOG ALTO: {open_alerts} abiertas ({open_pct:.1f}%) - REQUIERE ACCIÓN INMEDIATA.")
+                
+                if critical_open > 0:
+                    exec_lines.append(f"🚨 {critical_open} alertas CRÍTICAS sin resolver - Escalar a gerencia YA.")
+                
+                # By branch
+                if by_branch:
+                    worst = max(by_branch.items(), key=lambda x: x[1].get("open", 0))
+                    if worst[1].get("open", 0) > 0:
+                        exec_lines.append(f"Sucursal más afectada: {worst[0]} ({worst[1]['open']} abiertas, {worst[1].get('critical_open', 0)} críticas).")
+            else:
+                exec_lines.append("✅ Período sin alertas - Operación normal.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics Dashboard
+            h2("📊 Panel de Control de Alertas")
+            metric_card("Total alertas", f"{total_alerts:,}")
+            metric_card("Abiertas", f"{open_alerts} ({open_pct:.1f}%)", 
+                       "good" if open_alerts == 0 else ("warning" if open_pct < 20 else "critical"))
+            metric_card("Resueltas", f"{resolved_alerts:,}")
+            metric_card("Tiempo prom. resolución", f"{avg_resolution:.1f}h",
+                       "good" if avg_resolution < 24 else ("warning" if avg_resolution < 48 else "critical"))
+            metric_card("Críticas abiertas", str(critical_open), "critical" if critical_open > 0 else "good")
+            
+            # By severity
+            if by_severity:
+                h2("Por Severidad")
+                table(["Severidad", "Cantidad", "%"], [[k, v, f"{v/total_alerts*100:.1f}%"] for k, v in sorted(by_severity.items(), key=lambda x: -x[1])])
+            
+            # By type
+            if by_type:
+                h2("Por Tipo")
+                table(["Tipo", "Cantidad", "%"], [[k, v, f"{v/total_alerts*100:.1f}%"] for k, v in sorted(by_type.items(), key=lambda x: -x[1])])
+            
+            # By branch
+            if by_branch:
+                h2("Por Sucursal")
+                table(["Sucursal", "Total", "Abiertas", "Críticas abiertas"], [[b, v["total"], v.get("open", 0), v.get("critical_open", 0)] for b, v in sorted(by_branch.items(), key=lambda x: -x[1].get("open", 0))])
+            
+            # Recommendations
+            recommendations = []
+            if critical_open > 0:
+                recommendations.append(f"Resolver {critical_open} alertas CRÍTICAS ahora - asignar responsable y deadline 2h")
+            if open_alerts > 10:
+                recommendations.append(f"Backlog de {open_alerts} alertas: dedicar 30min/día a cierre masivo")
+            if avg_resolution > 48:
+                recommendations.append("Tiempo de resolución >48h: revisar proceso de escalamiento y recursos")
+            if by_branch:
+                high_branch = [(b, v) for b, v in by_branch.items() if v.get("open", 0) > 5]
+                if high_branch:
+                    recommendations.append(f"Sucursales con >5 abiertas: {', '.join(b for b, v in high_branch)} - auditoría local")
+            
+            if recommendations:
+                h2("🎯 Plan de Acción Inmediato")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
+            
+            # Top open alerts detail
+            if top_open:
+                h2("🔴 Alertas Abiertas Prioritarias (Top 10)")
+                for row in top_open[:10]:
+                    severity = row.get("severity", "info").lower()
+                    icon = "🔴" if severity == "critical" else ("🟡" if severity == "high" else "🔵")
+                    lines.append(f"  {icon} {row['type']} - {row['product_name']} en {row['branch_name']} ({row['hours_open']}h abierta)")
+                
+                h2("Detalle Top 10")
                 table(
                     ["ID", "Tipo", "Severidad", "Producto", "Sucursal", "Horas abiertas"],
-                    [[row["alert_id"], row["type"], row["severity"], row["product_name"], row["branch_name"], row["hours_open"]] for row in report_data["top_open_alerts"][:10]],
+                    [[row["alert_id"], row["type"], row["severity"], row["product_name"], row["branch_name"], row["hours_open"]] for row in top_open[:10]],
                 )
 
         elif report_type == "branch_capacity":
-            h2("Capacidad por sucursal")
+            branches = report_data.get("branches", [])
+            suggestions = report_data.get("transfer_suggestions", [])
+            summary = report_data.get("summary", {})
+            
+            total_branches = summary.get("total_branches", len(branches))
+            with_limit = summary.get("with_capacity_limit", 0)
+            without_limit = summary.get("without_capacity_limit", 0)
+            avg_usage = summary.get("avg_usage_percent", 0)
+            
+            critical_branches = [b for b in branches if b.get("status") == "critical"]
+            warning_branches = [b for b in branches if b.get("status") == "warning"]
+            ok_branches = [b for b in branches if b.get("status") == "ok"]
+            no_limit_branches = [b for b in branches if b.get("status") == "no_limit"]
+            
+            # Executive Summary
+            exec_lines = []
+            exec_lines.append(f"Análisis de capacidad para {total_branches} sucursales ({with_limit} con límite, {without_limit} sin límite).")
+            exec_lines.append(f"Uso promedio: {avg_usage:.1f}%.")
+            
+            if critical_branches:
+                exec_lines.append(f"🔴 {len(critical_branches)} CRÍTICAS (>{90}% uso): {', '.join(b['branch_name'] for b in critical_branches[:5])}.")
+            if warning_branches:
+                exec_lines.append(f"⚠️  {len(warning_branches)} EN ALERTA (70-90%): {', '.join(b['branch_name'] for b in warning_branches[:5])}.")
+            if ok_branches:
+                exec_lines.append(f"✅ {len(ok_branches)} normales (<70%): {', '.join(b['branch_name'] for b in ok_branches[:5])}.")
+            if no_limit_branches:
+                exec_lines.append(f"ℹ️  {len(no_limit_branches)} sin límite configurado.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics
+            h2("📊 Scorecard Capacidad")
+            metric_card("Total sucursales", str(total_branches))
+            metric_card("Con límite", str(with_limit))
+            metric_card("Críticas (>90%)", str(len(critical_branches)), "critical" if critical_branches else "good")
+            metric_card("Advertencia (70-90%)", str(len(warning_branches)), "warning" if warning_branches else "good")
+            metric_card("OK (<70%)", str(len(ok_branches)), "good")
+            metric_card("Sin límite", str(len(no_limit_branches)))
+            metric_card("Uso promedio", f"{avg_usage:.1f}%")
+            
+            # Recommendations
+            recommendations = []
+            if critical_branches:
+                recommendations.append(f"URGENTE: Redistribuir stock de {len(critical_branches)} sucursales críticas ({', '.join(b['branch_name'] for b in critical_branches[:3])})")
+            if warning_branches:
+                recommendations.append(f"Monitorear {len(warning_branches)} en alerta - planificar recepciones con cuidado")
+            if no_limit_branches:
+                recommendations.append(f"Configurar max_products en {len(no_limit_branches)} sucursales sin límite para control automático")
+            if suggestions:
+                recommendations.append(f"Ejecutar {len(suggestions)} transferencias sugeridas para balancear carga")
+            
+            if recommendations:
+                h2("🎯 Recomendaciones")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
+            
+            # Detail table
+            h2("Capacidad por Sucursal")
             table(
                 ["Sucursal", "SKUs actuales", "Máx.", "Uso %", "Estado", "Última actualización"],
-                [[row["branch_name"], row["current_skus"], row["max_products"], row["usage_percent"], row["status"], row["last_inventory_update"]] for row in report_data.get("branches", [])],
+                [[row["branch_name"], row["current_skus"], row["max_products"] if row["max_products"] else "Sin límite", 
+                  f"{row['usage_percent']:.1f}%" if row["usage_percent"] is not None else "N/A", 
+                  {"critical": "🔴 Crítica", "warning": "🟡 Alerta", "ok": "🟢 OK", "no_limit": "⚪ Sin límite"}.get(row["status"], row["status"]), 
+                  row["last_inventory_update"]] for row in branches],
             )
-            if report_data.get("transfer_suggestions"):
-                h2("Sugerencias de transferencia")
-                table(["Desde", "Hacia", "Motivo"], [[row["from_branch"], row["to_branch"], row["reason"]] for row in report_data["transfer_suggestions"]])
+            
+            if suggestions:
+                h2("Sugerencias de Transferencia")
+                table(["Desde", "Hacia", "Motivo"], [[row["from_branch"], row["to_branch"], row["reason"]] for row in suggestions])
 
         elif report_type == "config_changes":
-            h2("Cambios de configuración")
-            table(["ID", "Entidad", "Campo", "Anterior", "Nuevo", "Cambio por", "Fecha"], [[row["id"], row["entity_name"], row["field_name"], row["old_value"], row["new_value"], row["changed_by"], row["changed_at"]] for row in report_data.get("changes", [])[:50]])
+            changes = report_data.get("changes", [])
+            summary = report_data.get("summary", {})
+            total_changes = summary.get("total_changes", len(changes))
+            by_type = summary.get("by_entity_type", {})
+            
+            # Executive Summary
+            exec_lines = []
+            exec_lines.append(f"Total cambios de configuración detectados: {total_changes:,}.")
+            
+            if by_type:
+                top_type = max(by_type.items(), key=lambda x: x[1])
+                exec_lines.append(f"Entidad más modificada: {top_type[0]} ({top_type[1]} cambios, {top_type[1]/total_changes*100:.1f}%).")
+            
+            # Recent high-impact changes
+            sensitive_fields = ["price", "cost", "stock", "min_stock", "max_stock", "unit_price", "unit_cost", "is_active", "product_status"]
+            sensitive_changes = [c for c in changes if any(f in c.get("field_name", "").lower() for f in sensitive_fields)]
+            if sensitive_changes:
+                exec_lines.append(f"⚠️  {len(sensitive_changes)} cambios en campos SENSIBLES (precio, stock, estado) - Auditar impacto.")
+            
+            if not changes:
+                exec_lines.append("Sin cambios en el período.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics
+            h2("📊 Resumen Auditoría")
+            metric_card("Total cambios", f"{total_changes:,}")
+            metric_card("Entidades afectadas", str(len(by_type)))
+            metric_card("Campos sensibles", str(len(sensitive_changes)), "warning" if sensitive_changes else "good")
+            
+            if by_type:
+                h2("Por Tipo de Entidad")
+                table(["Tipo", "Cambios", "%"], [[t, c, f"{c/total_changes*100:.1f}%"] for t, c in sorted(by_type.items(), key=lambda x: -x[1])])
+            
+            # Detail
+            if changes:
+                h2(f"Detalle (últimos 50 de {len(changes)})")
+                table(["ID", "Entidad", "Campo", "Anterior", "Nuevo", "Por", "Fecha"], [[row["id"], row["entity_name"], row["field_name"], str(row["old_value"])[:50], str(row["new_value"])[:50], row["changed_by"], row["changed_at"]] for row in changes[:50]])
+            
+            # Recommendations
+            if sensitive_changes:
+                h2("🎯 Acciones Requeridas")
+                recommendation("1. Revisar cada cambio en campos sensibles: validar autorización y impacto")
+                recommendation("2. Verificar que cambios de precio/costo tengan aprobación gerencial documentada")
+                recommendation("3. Confirmar que cambios de stock mínimos/máximos no rompan reposiciones automáticas")
 
         elif report_type == "batches":
             expiring_batches = report_data.get("expiring_batches", [])
             expired_batches = report_data.get("expired_batches", [])
+            summary = report_data.get("summary", {})
             
+            total_batches = summary.get("total_batches", len(expiring_batches) + len(expired_batches))
+            expiring_soon = summary.get("expiring_soon", len(expiring_batches))
+            expired = summary.get("expired", len(expired_batches))
+            total_qty_at_risk = summary.get("total_quantity_at_risk", 0)
+            
+            urgent = [b for b in expiring_batches if b.get("days_until_expiry", 0) <= 7]
+            warning = [b for b in expiring_batches if 7 < b.get("days_until_expiry", 0) <= 30]
+            normal = [b for b in expiring_batches if b.get("days_until_expiry", 0) > 30]
+            
+            # Executive Summary
+            exec_lines = []
+            exec_lines.append(f"Análisis de lotes: {total_batches} totales | {expiring_soon} por vencer | {expired} expirados.")
+            exec_lines.append(f"Cantidad en riesgo: {total_qty_at_risk:,} unidades.")
+            
+            if urgent:
+                exec_lines.append(f"🔴 CRÍTICO: {len(urgent)} lotes vencen en ≤7 días - ACCIÓN INMEDIATA.")
+            if warning:
+                exec_lines.append(f"🟡 URGENTE: {len(warning)} lotes vencen en 8-30 días - Planear promo/transferencia.")
+            if normal:
+                exec_lines.append(f"🟢 MONITOR: {len(normal)} lotes vencen en >30 días - Seguimiento rutinario.")
+            if expired:
+                exec_lines.append(f"⚫ EXPIRADOS: {len(expired)} lotes ya vencidos - Disposición requerida.")
+            if not expiring_batches and not expired_batches:
+                exec_lines.append("✅ Sin lotes en riesgo de vencimiento.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics
+            h2("📊 Panel de Vencimientos")
+            metric_card("Total lotes analizados", str(total_batches))
+            metric_card("Próximos a vencer", str(expiring_soon), "critical" if urgent else ("warning" if warning else "good"))
+            metric_card("  → ≤7 días (crítico)", str(len(urgent)), "critical" if urgent else "good")
+            metric_card("  → 8-30 días (urgente)", str(len(warning)), "warning" if warning else "good")
+            metric_card("  → >30 días (monitor)", str(len(normal)))
+            metric_card("Ya expirados", str(expired), "critical" if expired else "good")
+            metric_card("Unidades en riesgo", f"{total_qty_at_risk:,}")
+            
+            # Recommendations
+            recommendations = []
+            if urgent:
+                recommendations.append(f"LANZAR PROMOCIONES FLASH para {len(urgent)} lotes críticos (descuento 20-50% o 2x1)")
+                recommendations.append("Coordinar con marketing: comunicación urgente 'últimas unidades'")
+            if warning:
+                recommendations.append(f"Planear promociones estándar para {len(warning)} lotes en ventana 8-30 días")
+            if expired:
+                recommendations.append(f"Disponer {len(expired)} lotes expirados: donación, destrucción certificada o retorno a proveedor")
+            if by_branch := report_data.get("by_branch", {}):
+                high_risk_branches = [(b, v) for b, v in by_branch.items() if v.get("expiring", 0) + v.get("expired", 0) > 5]
+                if high_risk_branches:
+                    recommendations.append(f"Sucursales con alta concentración: {', '.join(b for b, v in high_risk_branches[:3])} - redistribuir a sucursales con mejor rotación")
+            
+            if recommendations:
+                h2("🎯 Plan de Acción Inmediato")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
+            
+            # Detail tables
             if expiring_batches:
-                h2("Resumen Ejecutivo")
-                lines.append(f"    {len(expiring_batches)} lotes próximos a vencer requieren atención.")
-                urgent = [b for b in expiring_batches if b.get("days_until_expiry", 0) <= 7]
-                if urgent:
-                    critical(f"{len(urgent)} lotes vencen en 7 días o menos - Acción inmediata requerida")
-                    insight("Considerar promociones o transferencias para mover estos productos rápidamente")
-                else:
-                    warning(f"{len(expiring_batches)} lotes próximos a vencer - Planificar acciones")
-            
-            h2("Lotes próximos a vencer")
-            table(["Lote", "Producto", "Sucursal", "Vence", "Días", "Cantidad", "Acción sugerida"], 
-                  [[row["batch_number"], row["product_name"], row["branch_name"], _fmt_date_iso_to_readable(row["expiration_date"]), row["days_until_expiry"], row["quantity"], 
-                    "Promoción urgente" if row["days_until_expiry"] <= 7 else "Promoción/Transferencia"] 
-                   for row in expiring_batches[:20]])
+                h2(f"Lotes Próximos a Vencer ({len(expiring_batches)})")
+                table(
+                    ["Lote", "Producto", "Sucursal", "Vence", "Días", "Cant.", "Urgencia", "Acción"],
+                    [[row["batch_number"], row["product_name"], row["branch_name"], 
+                      _fmt_date_iso_to_readable(row["expiration_date"]), row["days_until_expiry"], row["quantity"],
+                      "🔴 ≤7d" if row["days_until_expiry"] <= 7 else ("🟡 8-30d" if row["days_until_expiry"] <= 30 else "🟢 >30d"),
+                      "Promo FLASH" if row["days_until_expiry"] <= 7 else ("Promo/Transferencia" if row["days_until_expiry"] <= 30 else "Monitor")]
+                     for row in expiring_batches[:30]],
+                )
             
             if expired_batches:
-                h2("🔴 Lotes expirados")
-                critical(f"{len(expired_batches)} lotes ya expirados - Revisar para disposición")
-                table(["Lote", "Producto", "Sucursal", "Vence", "Días", "Cantidad"], 
-                      [[row["batch_number"], row["product_name"], row["branch_name"], _fmt_date_iso_to_readable(row["expiration_date"]), row["days_until_expiry"], row["quantity"]] 
-                       for row in expired_batches[:20]])
+                h2(f"⚫ Lotes Expirados ({len(expired_batches)})")
+                table(
+                    ["Lote", "Producto", "Sucursal", "Venció", "Días", "Cant.", "Disposición sugerida"],
+                    [[row["batch_number"], row["product_name"], row["branch_name"], 
+                      _fmt_date_iso_to_readable(row["expiration_date"]), row["days_until_expiry"], row["quantity"],
+                      "Donar" if row["quantity"] < 10 else ("Destruir" if row["days_until_expiry"] < -30 else "Retornar proveedor")]
+                     for row in expired_batches[:30]],
+                )
 
         elif report_type == "kits":
-            h2("Kits")
-            for kit in report_data.get("kits", []):
-                kv("Kit:", f"{kit['product_name']} ({kit['sku']})")
-                table(["Componente", "SKU", "Cantidad"], [[component["name"], component["sku"], component["quantity_needed"]] for component in kit.get("components", [])])
+            kits = report_data.get("kits", [])
+            total_kits = len(kits)
+            total_components = sum(len(k.get("components", [])) for k in kits)
+            
+            # Executive Summary
+            exec_lines = []
+            if total_kits > 0:
+                exec_lines.append(f"Catálogo de Kits: {total_kits} kits definidos con {total_components} componentes totales.")
+                
+                # Stock status analysis
+                out_of_stock = sum(1 for k in kits if k.get("stock_status") == "out")
+                low_stock = sum(1 for k in kits if k.get("stock_status") == "low")
+                ok_stock = sum(1 for k in kits if k.get("stock_status") == "ok")
+                
+                exec_lines.append(f"Estado de stock: {ok_stock} OK | {low_stock} BAJO | {out_of_stock} AGOTADO.")
+                
+                if out_of_stock > 0:
+                    exec_lines.append(f"🔴 {out_of_stock} kits SIN STOCK - No se pueden armar/vender.")
+                if low_stock > 0:
+                    exec_lines.append(f"🟡 {low_stock} kits con stock LIMITADO - Priorizar reposición componentes.")
+                
+                # Component analysis
+                all_components = []
+                for k in kits:
+                    for comp in k.get("components", []):
+                        all_components.append(comp)
+                
+                if all_components:
+                    critical_comps = [c for c in all_components if c.get("quantity_needed", 0) > 10]
+                    exec_lines.append(f"Componentes críticos (necesidad >10/u): {len(critical_comps)}.")
+            else:
+                exec_lines.append("No hay kits definidos en el sistema.")
+            
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics
+            h2("📊 Resumen de Kits")
+            metric_card("Total kits", str(total_kits))
+            if total_kits > 0:
+                metric_card("Componentes únicos", str(total_components))
+                metric_card("Stock OK", str(ok_stock), "good" if ok_stock == total_kits else ("warning" if low_stock > 0 else "critical"))
+                metric_card("Stock Bajo", str(low_stock), "warning" if low_stock > 0 else "good")
+                metric_card("Sin Stock", str(out_of_stock), "critical" if out_of_stock > 0 else "good")
+            
+            # Detail
+            if kits:
+                h2("Detalle por Kit")
+                for kit in kits:
+                    status_icon = {"ok": "🟢", "low": "🟡", "out": "🔴"}.get(kit.get("stock_status", "ok"), "⚪")
+                    lines.append(f"\n  {status_icon} {kit['product_name']} ({kit['sku']}) - Stock kit: {kit.get('total_stock_kit', 0)} - Estado: {kit.get('stock_status', 'ok')}")
+                    if kit.get("components"):
+                        table(
+                            ["Componente", "SKU", "Cant. requerida", "Stock disp."],
+                            [[component["name"], component["sku"], component["quantity_needed"], "—"] 
+                             for component in kit["components"]],
+                        )
 
         elif report_type == "abc_analysis":
             s = report_data.get("summary", {})
@@ -2323,33 +3188,76 @@ class ReportsService:
             class_b = s.get("class_b_count", 0)
             class_c = s.get("class_c_count", 0)
             dead_stock = s.get("dead_stock_count", 0)
+            dead_stock_value = s.get("dead_stock_value", 0)
             total_products = class_a + class_b + class_c + dead_stock
+            total_value = sum(item.get("total_value", 0) for item in report_data.get("class_a_products", []) + report_data.get("class_b_products", []) + report_data.get("class_c_products", []))
             
-            h2("Resumen")
-            kv("Clases A:", class_a)
-            kv("Clases B:", class_b)
-            kv("Clases C:", class_c)
-            kv("Dead stock:", dead_stock)
-            
+            # Executive Summary
+            exec_lines = []
             if total_products > 0:
-                h2("Resumen Ejecutivo")
-                lines.append("    Clasificación ABC de inventario por valor de rotación:")
-                lines.append("    • Clase A: ~20% productos, ~80% valor (críticos, monitoreo continuo)")
-                lines.append("    • Clase B: ~30% productos, ~15% valor (importantes, revisión periódica)")
-                lines.append("    • Clase C: ~50% productos, ~5% valor (menor prioridad, control básico)")
+                exec_lines.append(f"Clasificación ABC completada: {total_products} productos analizados | Valor total inventario: ${total_value:,.2f}.")
+                
+                exec_lines.append(f"Clase A (Críticos): {class_a} productos ({class_a/total_products*100:.1f}%) → ~80% valor.")
+                exec_lines.append(f"Clase B (Importantes): {class_b} productos ({class_b/total_products*100:.1f}%) → ~15% valor.")
+                exec_lines.append(f"Clase C (Rutina): {class_c} productos ({class_c/total_products*100:.1f}%) → ~5% valor.")
                 
                 if dead_stock > 0:
-                    dead_pct = (dead_stock / total_products * 100) if total_products > 0 else 0
-                    critical(f"{dead_stock} productos sin movimiento ({dead_pct:.1f}% del total) - Revisar para liquidación")
-                    insight("Considerar promociones de liquidación para dead stock")
+                    exec_lines.append(f"🔴 DEAD STOCK: {dead_stock} productos ({dead_stock/total_products*100:.1f}%) SIN MOVIMIENTO → Valor atrapado: ${dead_stock_value:,.2f}.")
+                    exec_lines.append("    → Acción: Liquidar, donar o retornar a proveedor.")
+                
+                # Pareto check
+                class_a_value = sum(item.get("total_value", 0) for item in report_data.get("class_a_products", []))
+                if total_value > 0:
+                    a_pct = class_a_value / total_value * 100
+                    exec_lines.append(f"Validación Pareto: Clase A = {a_pct:.1f}% del valor (esperado ~80%).")
+            else:
+                exec_lines.append("Sin productos para clasificar.")
             
+            executive_summary("\n".join(exec_lines))
+            
+            # Metrics
+            h2("📊 Scorecard ABC")
+            metric_card("Total productos", str(total_products))
+            metric_card("Clase A (Críticos)", f"{class_a} ({class_a/total_products*100:.1f}%)", "critical" if class_a > 0 else "good")
+            metric_card("Clase B (Importantes)", f"{class_b} ({class_b/total_products*100:.1f}%)", "warning" if class_b > 0 else "good")
+            metric_card("Clase C (Rutina)", f"{class_c} ({class_c/total_products*100:.1f}%)", "good")
+            metric_card("Dead Stock", f"{dead_stock} ({dead_stock/total_products*100:.1f}%)", "critical" if dead_stock > 0 else "good")
+            metric_card("Valor Dead Stock", f"${dead_stock_value:,.2f}", "critical" if dead_stock_value > 0 else "good")
+            metric_card("Valor Total Inventario", f"${total_value:,.2f}")
+            
+            # Recommendations
+            recommendations = []
+            if class_a > 0:
+                recommendations.append("Clase A: Configurar alertas automáticas, conteo cíclico semanal, stock de seguridad alto")
+            if dead_stock > 0:
+                recommendations.append(f"Dead Stock ({dead_stock} items): Campaña liquidación 50-70% dto, donación fiscal, o retorno proveedor")
+                recommendations.append(f"Valor recuperable estimado: ${dead_stock_value * 0.3:,.2f} (30% valor libros) vs ${dead_stock_value:,.2f} costo oportunidad")
+            if class_c > total_products * 0.6:
+                recommendations.append("Muchos productos Clase C: Revisar catálogo - ¿eliminar SKUs zombis?")
+            if total_products > 1000:
+                recommendations.append("Catálogo >1000 SKUs: Implementar segmentación automática mensual")
+            
+            if recommendations:
+                h2("🎯 Estrategia por Clase")
+                for i, rec in enumerate(recommendations, 1):
+                    recommendation(f"{i}. {rec}")
+            
+            # Detail tables
             if report_data.get("class_a_products"):
-                h2("🔴 Productos clase A (críticos)")
-                table(["Producto", "SKU", "Valor total", "% total"], [[item["product_name"], item["sku"], f"${item['total_value']:,.2f}", item["percent_of_total"]] for item in report_data["class_a_products"][:20]])
+                h2("🔴 Clase A - Monitoreo CONTINUO (Top 20)")
+                table(["Producto", "SKU", "Valor Total", "% Total", "Acción"], [[item["product_name"], item["sku"], f"${item['total_value']:,.2f}", item["percent_of_total"], "Alertas + Conteo semanal + Stock seguro ALTO"] for item in report_data["class_a_products"][:20]])
+            
+            if report_data.get("class_b_products"):
+                h2("🟡 Clase B - Revisión PERIÓDICA (Top 20)")
+                table(["Producto", "SKU", "Valor Total", "% Total"], [[item["product_name"], item["sku"], f"${item['total_value']:,.2f}", item["percent_of_total"]] for item in report_data["class_b_products"][:20]])
+            
+            if report_data.get("class_c_products"):
+                h2("🟢 Clase C - Control BÁSICO (Top 20)")
+                table(["Producto", "SKU", "Valor Total", "% Total"], [[item["product_name"], item["sku"], f"${item['total_value']:,.2f}", item["percent_of_total"]] for item in report_data["class_c_products"][:20]])
             
             if report_data.get("dead_stock"):
-                h2("🟡 Dead stock (sin movimiento)")
-                table(["Producto", "SKU", "Días sin movimiento", "Stock actual"], [[item["product_name"], item["sku"], item["days_without_movement"], item["current_stock"]] for item in report_data["dead_stock"][:20]])
+                h2("⚫ DEAD STOCK - Plan de Liquidación")
+                table(["Producto", "SKU", "Días sin mov.", "Stock actual", "Valor atrapado", "Acción recomendada"], [[item["product_name"], item["sku"], item["days_without_movement"], item["current_stock"], f"${item['total_value']:,.2f}" if 'total_value' in item else "$—", "Liquidar 70% dto / Donar / Devolver"] for item in report_data["dead_stock"][:20]])
 
         return "\n".join(lines)
 
