@@ -233,8 +233,8 @@ class ReportsService:
         for item in items:
             report["total_physical_stock"] += item.physical_stock
             report["total_digital_stock"] += item.digital_stock
-            
-            unit_price = getattr(item.product, 'cost_price', 0) or 0
+
+            unit_price = item.unit_cost or item.product.unit_price or 0
             item_value = item.digital_stock * unit_price
             report["total_value"] += item_value
 
@@ -271,6 +271,8 @@ class ReportsService:
                     "digital": item.digital_stock,
                     "difference": item.difference,
                     "percentage": round((abs(item.difference) / max(item.digital_stock, 1)) * 100, 2),
+                    "unit_price": unit_price,
+                    "impact_value": round(abs(item.difference) * unit_price, 2),
                 })
 
             if item.is_low_stock:
@@ -339,6 +341,7 @@ class ReportsService:
             },
             "total_movements": len(movements),
             "total_quantity": 0,
+            "total_cost": 0.0,
             "by_type": {},
             "by_state": {},
             "by_branch": {},
@@ -348,19 +351,25 @@ class ReportsService:
 
         for m in movements:
             mtype = m.movement_type
-            report["by_type"].setdefault(mtype, {"count": 0, "total_quantity": 0})
+            report["by_type"].setdefault(mtype, {"count": 0, "total_quantity": 0, "total_cost": 0.0})
             report["by_type"][mtype]["count"] += 1
             report["by_type"][mtype]["total_quantity"] += m.quantity
             report["total_quantity"] += m.quantity
+            
+            if m.total_cost is not None:
+                report["by_type"][mtype]["total_cost"] += m.total_cost
+                report["total_cost"] += m.total_cost
 
             state = m.state
             report["by_state"][state] = report["by_state"].get(state, 0) + 1
 
             branch_name = m.branch.name if m.branch else "Desconocido"
             b_key = branch_name
-            report["by_branch"].setdefault(b_key, {"movements": 0, "quantity": 0})
+            report["by_branch"].setdefault(b_key, {"movements": 0, "quantity": 0, "total_cost": 0.0})
             report["by_branch"][b_key]["movements"] += 1
             report["by_branch"][b_key]["quantity"] += m.quantity
+            if m.total_cost is not None:
+                report["by_branch"][b_key]["total_cost"] += m.total_cost
 
             if m.created_at:
                 day_name = m.created_at.strftime("%A")
@@ -382,6 +391,8 @@ class ReportsService:
                 "origin_branch": branch_name,
                 "destination_branch": destination_branch_name,
                 "user": m.user.name if m.user else "Desconocido",
+                "unit_cost": m.unit_cost,
+                "total_cost": m.total_cost,
             })
 
         return report
@@ -446,6 +457,9 @@ class ReportsService:
             elif diff < 0:
                 report["summary"]["negative_differences"] += 1
 
+            unit_cost = item.unit_cost or (item.product.unit_price if item.product else None)
+            impact_value = abs(diff) * (unit_cost or 0)
+
             report["items"].append({
                 "product": item.product.name,
                 "sku": item.product.sku,
@@ -454,6 +468,8 @@ class ReportsService:
                 "digital": item.digital_stock,
                 "difference": diff,
                 "percentage": round((abs(diff) / max(item.digital_stock, 1)) * 100, 2),
+                "unit_cost": unit_cost,
+                "impact_value": round(impact_value, 2),
             })
 
         report["items"].sort(key=lambda x: x["percentage"], reverse=True)
@@ -1776,18 +1792,19 @@ class ReportsService:
             if report_data.get("by_category"):
                 h2("Por categoría")
                 table(
-                    ["Categoría", "Artículos", "Stock", "Valor"],
+["Categoría", "Artículos", "Stock", "Valor"],
                     [[c, v["items"], v["digital_stock"], f"${v['value']:,.2f}"]
-                     for c, v in report_data["by_category"].items()],
+                      for c, v in report_data["by_category"].items()],
                 )
             
             if discrepancies:
                 h2(f"⚠ Discrepancias ({len(discrepancies)} ítems)")
                 table(
-                    ["Producto", "SKU", "Sucursal", "Físico", "Digital", "Diferencia", "%"],
+                    ["Producto", "SKU", "Sucursal", "Físico", "Digital", "Diferencia", "%", "Valor impacto"],
                     [[i["product"], i["sku"], i["branch"],
-                      i["physical"], i["digital"], i["difference"], f"{i['percentage']}%"]
-                     for i in discrepancies[:50]],
+                      i["physical"], i["digital"], i["difference"], f"{i['percentage']}%",
+                      f"${i.get('impact_value', 0):,.2f}"]
+                      for i in discrepancies[:50]],
                 )
             
             if low_stock:
@@ -1829,28 +1846,31 @@ class ReportsService:
             h2("Resumen")
             kv("Total movimientos:", total_movements)
             kv("Total unidades movidas:", total_quantity)
+            total_cost = report_data.get("total_cost", 0)
+            if total_cost:
+                kv("Costo total movimientos:", f"${total_cost:,.2f}")
             
             if by_type:
                 h2("Por tipo")
                 table(
-                    ["Tipo", "Cantidad", "Unidades"],
-                    [[t, v["count"], v["total_quantity"]]
-                     for t, v in by_type.items()],
+                    ["Tipo", "Cantidad", "Unidades", "Costo total"],
+                    [[t, v["count"], v["total_quantity"], f"${v.get('total_cost', 0):,.2f}"]
+                      for t, v in by_type.items()],
                 )
             
             if by_state:
                 h2("Por estado")
                 table(
                     ["Estado", "Cantidad"],
-                    [[s, c] for s, c in by_state.items()],
+[[s, c] for s, c in by_state.items()],
                 )
             
             if report_data.get("by_branch"):
                 h2("Por sucursal")
                 table(
-                    ["Sucursal", "Movimientos", "Unidades"],
-                    [[b, v["movements"], v["quantity"]]
-                     for b, v in report_data["by_branch"].items()],
+                    ["Sucursal", "Movimientos", "Unidades", "Costo total"],
+                    [[b, v["movements"], v["quantity"], f"${v.get('total_cost', 0):,.2f}"]
+                      for b, v in report_data["by_branch"].items()],
                 )
             
             if report_data.get("by_day_of_week"):
@@ -1870,15 +1890,18 @@ class ReportsService:
             if report_data.get("movements"):
                 h2(f"Detalle de movimientos (primeros {min(len(report_data['movements']), 100)})")
                 table(
-                    ["Fecha", "Producto", "SKU", "Cantidad", "Tipo", "Estado", "Origen", "Destino", "Usuario"],
-                    [[m["date"], m["product"], m["sku"], m["quantity"], m["type"], m["state"],
+                    ["Fecha", "Producto", "SKU", "Cantidad", "Costo unit.", "Costo total", "Tipo", "Estado", "Origen", "Destino", "Usuario"],
+                    [[m["date"], m["product"], m["sku"], m["quantity"],
+                      f"${m.get('unit_cost', 0):,.2f}" if m.get('unit_cost') else "—",
+                      f"${m.get('total_cost', 0):,.2f}" if m.get('total_cost') else "—",
+                      m["type"], m["state"],
                       m["origin_branch"], m["destination_branch"], m["user"]]
-                     for m in report_data["movements"][:100]],
+                      for m in report_data["movements"][:100]],
                 )
                 if len(report_data["movements"]) > 100:
                     lines.append(f"\n  … y {len(report_data['movements']) - 100} movimientos más (exporta a CSV/Excel para verlos todos)")
 
-        # ── Discrepancias ─────────────────────────────────────────────────────
+# ── Discrepancias ─────────────────────────────────────────────────────
         elif report_type == "discrepancies":
             s = report_data.get("summary", {})
             h2("Resumen")
@@ -1886,13 +1909,16 @@ class ReportsService:
             kv("Diferencia absoluta total:", s.get("total_difference", 0))
             kv("Con exceso (físico > digital):", s.get("positive_differences", 0))
             kv("Con faltante (físico < digital):", s.get("negative_differences", 0))
+            total_impact = sum(i.get("impact_value", 0) for i in report_data.get("items", []))
+            kv("Impacto económico total:", f"${total_impact:,.2f}")
             if report_data.get("items"):
                 h2("Detalle")
                 table(
-                    ["Producto", "SKU", "Sucursal", "Físico", "Digital", "Diferencia", "%"],
+                    ["Producto", "SKU", "Sucursal", "Físico", "Digital", "Diferencia", "%", "Impacto $"],
                     [[i["product"], i["sku"], i["branch"],
-                      i["physical"], i["digital"], i["difference"], i["percentage"]]
-                     for i in report_data["items"][:50]],
+                      i["physical"], i["digital"], i["difference"], i["percentage"],
+                      f"${i.get('impact_value', 0):,.2f}"]
+                      for i in report_data["items"][:50]],
                 )
 
         # ── KPIs ──────────────────────────────────────────────────────────────
