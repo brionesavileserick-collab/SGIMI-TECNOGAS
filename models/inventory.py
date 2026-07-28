@@ -125,10 +125,13 @@ class Inventory(Base):
 
     @property
     def inventory_value(self) -> float:
-        """Total value of this inventory item (digital_stock * unit_cost)."""
-        if self.unit_cost is None:
-            return 0.0
-        return self.digital_stock * self.unit_cost
+        """Total value of this inventory item (digital_stock * unit_price)."""
+        # Usa unit_cost si está configurado, sino usa product.unit_price
+        if self.unit_cost is not None:
+            return self.digital_stock * self.unit_cost
+        if self.product and self.product.unit_price is not None:
+            return self.digital_stock * self.product.unit_price
+        return 0.0
 
     @property
     def location(self) -> Optional[str]:

@@ -645,12 +645,12 @@ class InventoryRepository:
 
     def get_total_inventory_value(self, branch_id: int = None) -> float:
         """
-        Expansión 8 - Valor total del inventario: SUM(digital_stock * unit_cost).
-        Solo incluye items que tienen unit_cost configurado.
+        Expansión 8 - Valor total del inventario: SUM(digital_stock * unit_price).
+        Usa Product.unit_price para calcular el valor de venta del inventario.
         """
         query = (
             self.db.query(
-                func.sum(Inventory.digital_stock * Inventory.unit_cost)
+                func.sum(Inventory.digital_stock * Product.unit_price)
             )
             .join(Product)
             .join(Branch)
@@ -658,7 +658,7 @@ class InventoryRepository:
                 Inventory.is_active == True,
                 Product.is_active == True,
                 Branch.is_active == True,
-                Inventory.unit_cost.isnot(None),
+                Product.unit_price.isnot(None),
             )
         )
         if branch_id:
@@ -668,14 +668,16 @@ class InventoryRepository:
 
     def get_most_valuable_items(self, branch_id: int, limit: int = 10) -> List[Dict[str, Any]]:
         """
-        Expansión 8 - Top N items por valor total (digital_stock * unit_cost).
+        Expansión 8 - Top N items por valor total (digital_stock * unit_price).
+        Usa Product.unit_price para calcular el valor de venta del inventario.
         """
         results = (
             self.db.query(
                 Inventory,
                 Product.name,
                 Product.sku,
-                (Inventory.digital_stock * Inventory.unit_cost).label("total_value"),
+                (Inventory.digital_stock * Product.unit_price).label("total_value"),
+                Product.unit_price.label("unit_price"),
             )
             .join(Product, Inventory.product_id == Product.id)
             .join(Branch, Inventory.branch_id == Branch.id)
@@ -684,9 +686,9 @@ class InventoryRepository:
                 Inventory.is_active == True,
                 Product.is_active == True,
                 Branch.is_active == True,
-                Inventory.unit_cost.isnot(None),
+                Product.unit_price.isnot(None),
             )
-            .order_by((Inventory.digital_stock * Inventory.unit_cost).desc())
+            .order_by((Inventory.digital_stock * Product.unit_price).desc())
             .limit(limit)
             .all()
         )
@@ -698,10 +700,10 @@ class InventoryRepository:
                 "product_name": name,
                 "product_sku": sku,
                 "digital_stock": inv.digital_stock,
-                "unit_cost": inv.unit_cost,
+                "unit_price": float(unit_price) if unit_price else 0.0,
                 "total_value": float(total_value) if total_value else 0.0,
             }
-            for inv, name, sku, total_value in results
+            for inv, name, sku, total_value, unit_price in results
         ]
 
     # ------------------------------------------------------------------
@@ -1188,13 +1190,15 @@ class InventoryRepository:
         )
 
     def get_valuation_by_category(self, branch_id: int) -> List[Dict[str, Any]]:
-        """Valor de inventario agrupado por categoría de producto."""
+        """Valor de inventario agrupado por categoría de producto.
+        Usa Product.unit_price para calcular el valor de venta del inventario.
+        """
         from models.category import Category
         results = (
             self.db.query(
                 Category.id,
                 Category.name,
-                func.sum(Inventory.digital_stock * Inventory.unit_cost).label("total_value"),
+                func.sum(Inventory.digital_stock * Product.unit_price).label("total_value"),
                 func.count(Inventory.id).label("item_count"),
             )
             .join(Product, Inventory.product_id == Product.id)
@@ -1203,7 +1207,7 @@ class InventoryRepository:
                 Inventory.branch_id == branch_id,
                 Inventory.is_active == True,
                 Product.is_active == True,
-                Inventory.unit_cost.isnot(None),
+                Product.unit_price.isnot(None),
             )
             .group_by(Category.id, Category.name)
             .all()

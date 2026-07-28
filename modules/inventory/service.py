@@ -711,7 +711,7 @@ class InventoryService:
         self, branch_id: int, limit: int = 10
     ) -> List[Dict[str, Any]]:
         """
-        Expansión 8 - Top N items por valor total (digital_stock * unit_cost).
+        Expansión 8 - Top N items por valor total (digital_stock * unit_price).
         """
         return self.repository.get_most_valuable_items(branch_id, limit=limit)
 

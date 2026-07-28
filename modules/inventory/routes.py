@@ -775,13 +775,13 @@ class InventoryMetricsDialog(QDialog):
             layout.addWidget(lbl)
             if self.branch_id:
                 top = self.service.get_most_valuable_items(self.branch_id, limit=15)
-                t = self._make_table(["Producto", "SKU", "Stock", "Costo unit.", "Valor total"])
+                t = self._make_table(["Producto", "SKU", "Stock", "Precio unit.", "Valor total"])
                 t.setRowCount(len(top))
                 for row, item in enumerate(top):
                     t.setItem(row, 0, QTableWidgetItem(item.get("product_name", "")))
                     t.setItem(row, 1, QTableWidgetItem(item.get("product_sku", "")))
                     t.setItem(row, 2, QTableWidgetItem(str(item.get("digital_stock", 0))))
-                    t.setItem(row, 3, QTableWidgetItem(f"${item.get('unit_cost', 0):,.2f}"))
+                    t.setItem(row, 3, QTableWidgetItem(f"${item.get('unit_price', 0):,.2f}"))
                     t.setItem(row, 4, QTableWidgetItem(f"${item.get('total_value', 0):,.2f}"))
                 t.resizeColumnsToContents()
                 layout.addWidget(QLabel("Top 15 items por valor:"))
