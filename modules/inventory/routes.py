@@ -448,22 +448,9 @@ class InventoryItemDialog(QDialog):
         form = QFormLayout(w)
         form.setContentsMargins(12, 12, 12, 12)
 
-        current_cost = self.inventory_data.get("unit_cost")
         current_value = self.inventory_data.get("inventory_value", 0.0)
 
-        form.addRow(QLabel(f"<b>Valor actual del item:</b> ${current_value:,.2f}"))
-
-        self.unit_cost_input = QDoubleSpinBox()
-        self.unit_cost_input.setRange(0.0, 9999999.99)
-        self.unit_cost_input.setDecimals(2)
-        self.unit_cost_input.setPrefix("$ ")
-        self.unit_cost_input.setSpecialValueText("(no definido)")
-        self.unit_cost_input.setValue(current_cost if current_cost is not None else 0.0)
-        form.addRow("Costo unitario:", self.unit_cost_input)
-
-        hint = QLabel("El costo unitario puede diferir por sucursal.")
-        hint.setStyleSheet("color: gray; font-size: 11px;")
-        form.addRow(hint)
+        form.addRow(QLabel(f"<b>Valor actual:</b> ${current_value:,.2f}"))
         return w
 
 
@@ -522,10 +509,6 @@ class InventoryItemDialog(QDialog):
 
             # Min stock
             update_fields["min_stock"] = self.min_stock.value()
-
-            # Costo unitario (E8)
-            cost_val = self.unit_cost_input.value()
-            update_fields["unit_cost"] = cost_val if cost_val > 0 else None
 
             self.service.update_inventory(inv_id, update_fields)
             QMessageBox.information(self, "Éxito", "Cambios guardados correctamente.")
