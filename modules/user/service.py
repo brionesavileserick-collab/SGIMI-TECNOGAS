@@ -66,9 +66,13 @@ class UserService:
         if self.repository.email_exists(user_data.get("email")):
             raise ValueError(f"Ya existe un usuario con el correo '{user_data.get('email')}'")
 
-        # Create user
+        # Create a temporary user object to hash the password
+        temp_user = User()
+        temp_user.set_password(password)
+        user_data["password_hash"] = temp_user.password_hash
+
+        # Create user with password_hash already set
         user = self.repository.create(user_data)
-        user.set_password(password)
         self.db.commit()
         self.db.refresh(user)
 

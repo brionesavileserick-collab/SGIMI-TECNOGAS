@@ -19,7 +19,7 @@ class UserRepository:
         try:
             user = User(**user_data)
             self.db.add(user)
-            self.db.commit()
+            self.db.flush()
             self.db.refresh(user)
             return user
         except Exception as e:
