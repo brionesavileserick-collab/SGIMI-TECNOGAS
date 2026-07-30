@@ -122,6 +122,13 @@ def build_executable(onefile=False, target=None):
     project_root = Path(__file__).resolve().parent
     dist_dir = project_root / 'dist' / f'{APP_NAME}_Distribution_{target}'
     spec_dir = project_root / 'build' / 'spec'
+    
+    # Clean build directory to prevent old executables from accumulating
+    build_dir = project_root / 'build'
+    if build_dir.exists():
+        shutil.rmtree(build_dir)
+        print(f"Cleaned build directory: {build_dir}")
+    
     dist_dir.mkdir(parents=True, exist_ok=True)
     spec_dir.mkdir(parents=True, exist_ok=True)
 
